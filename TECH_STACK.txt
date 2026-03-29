@@ -1,0 +1,31 @@
+# Project Technology Stack: AI Research Assistant
+
+## Backend
+- **Language**: Python
+- **Framework**: FastAPI (uvicorn, pydantic)
+- **Database**: SQLite (SQLAlchemy ORM)
+- **Vector Database**: ChromaDB (AI research storage)
+- **AI/LLM**: Google Generative AI (Gemini), LangChain, LangGraph
+- **Authentication**: JWT (python-jose), Bcrypt (passlib)
+- **Document Processing**:
+    - **PDF**: PyMuPDF
+    - **Word**: python-docx
+    - **PowerPoint**: python-pptx
+    - **OCR**: pytesseract
+- **Data Analysis**: Pandas, Matplotlib
+- **Audio Processing**:
+    - **Speech-to-Text**: OpenAI Whisper
+    - **Text-to-Speech**: gTTS
+    - **Libraries**: librosa, soundfile
+- **Others**: python-dotenv, aiofiles, supabase (client ready)
+
+## Frontend
+- **Language**: TypeScript
+- **Framework**: React (Vite)
+- **Styling**: Tailwind CSS (PostCSS, Autoprefixer)
+- **Components/Icons**: Lucide React
+- **Animations**: Framer Motion
+- **Charts**: Recharts
+- **HTTP Client**: Axios
+- **State/Utilities**: clsx, tailwind-merge
+- **Build Tool**: Vite
