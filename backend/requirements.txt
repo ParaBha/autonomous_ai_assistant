@@ -9,6 +9,7 @@ passlib[bcrypt]
 google-generativeai
 langchain-google-genai
 langchain-text-splitters
+langchain-community
 langchain
 langgraph
 chromadb
