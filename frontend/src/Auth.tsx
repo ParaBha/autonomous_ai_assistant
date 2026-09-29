@@ -103,7 +103,8 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
         setIsLoading(true);
 
         try {
-            const endpoint = isLogin ? '/api/v1/auth/signin' : '/api/v1/auth/signup';
+            const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+            const endpoint = isLogin ? `${API_URL}/api/v1/auth/signin` : `${API_URL}/api/v1/auth/signup`;
             const payload = isLogin
                 ? { email: formData.email, password: formData.password }
                 : {
