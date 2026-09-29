@@ -78,10 +78,11 @@ class RAGService:
         if vector_db is not None:
             filter_dict = {"document_id": str(document_id)} if document_id else None
             try:
-                docs = vector_db.similarity_search(question, k=2, filter=filter_dict)
-                if docs:
-                    context = "\n\n".join([doc.page_content for doc in docs])
-                    sources = [{"content": doc.page_content, **doc.metadata} for doc in docs]
+                if vector_db._collection.count() > 0:
+                    docs = vector_db.similarity_search(question, k=2, filter=filter_dict)
+                    if docs:
+                        context = "\n\n".join([doc.page_content for doc in docs])
+                        sources = [{"content": doc.page_content, **doc.metadata} for doc in docs]
             except Exception as e:
                 print(f"RAG search error: {e}")
 
@@ -117,11 +118,13 @@ Research Response:"""
         if vector_db is not None:
             filter_dict = {"document_id": doc_id_str} if doc_id_str else None
             try:
-                docs = vector_db.similarity_search(question, k=2, filter=filter_dict)
-                if docs:
-                    context = "\n\n".join([f"Source ({doc.metadata.get('filename', 'Doc')}): {doc.page_content[:1000]}" for doc in docs])
-                    sources = [{"filename": doc.metadata.get("filename", "Unknown"), "document_id": doc.metadata.get("document_id")} for doc in docs]
-                    yield f"__SOURCES__:{json.dumps(sources)}\n"
+                # Only run embedding search if vector db has documents stored
+                if vector_db._collection.count() > 0:
+                    docs = vector_db.similarity_search(question, k=2, filter=filter_dict)
+                    if docs:
+                        context = "\n\n".join([f"Source ({doc.metadata.get('filename', 'Doc')}): {doc.page_content[:1000]}" for doc in docs])
+                        sources = [{"filename": doc.metadata.get("filename", "Unknown"), "document_id": doc.metadata.get("document_id")} for doc in docs]
+                        yield f"__SOURCES__:{json.dumps(sources)}\n"
             except Exception as e:
                 print(f"Similarity search notice: {e}")
 
