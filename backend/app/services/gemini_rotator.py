@@ -5,6 +5,9 @@ from google import genai
 from google.genai import types
 from app.core.config import settings
 
+MAX_RETRIES = 3
+RETRY_DELAY = 2  # seconds
+
 class APIKeysExhaustedError(Exception):
     """Raised when all configured Gemini API keys are exhausted due to rate limits (429 / ResourceExhausted)."""
     pass
@@ -67,6 +70,10 @@ class GeminiKeyManager:
         err_msg = str(e).lower()
         return any(term in err_msg for term in ["429", "resource_exhausted", "resourceexhausted", "quota", "rate limit"])
 
+    def is_unavailable_error(self, e: Exception) -> bool:
+        err_msg = str(e).lower()
+        return "503" in err_msg or "unavailable" in err_msg
+
     def _get_cached_client(self, key: str) -> genai.Client:
         """Return a cached google.genai.Client instance."""
         if key not in self._client_cache:
@@ -82,46 +89,53 @@ class GeminiKeyManager:
     ) -> str:
         """
         Invokes LLM with automatic Primary -> Secondary key failover on 429 errors.
+        Retries up to MAX_RETRIES times on 503 UNAVAILABLE before giving up.
         """
         active_key, role = self.get_active_key()
         target_model = model_name or settings.GEMINI_MODEL
-        try:
-            client = self._get_cached_client(active_key)
-            response = client.models.generate_content(
-                model=target_model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=temperature,
-                    max_output_tokens=max_output_tokens,
+        for attempt in range(MAX_RETRIES):
+            try:
+                client = self._get_cached_client(active_key)
+                response = client.models.generate_content(
+                    model=target_model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=temperature,
+                        max_output_tokens=max_output_tokens,
+                    )
                 )
-            )
-            return response.text or ""
-        except Exception as e:
-            if self.is_rate_limit_error(e):
-                if role == "PRIMARY":
-                    self.mark_primary_cooldown()
-                    if self.secondary_key:
-                        print("[GEMINI API MANAGER] Retrying request immediately with Secondary API Key...")
-                        try:
-                            client_sec = self._get_cached_client(self.secondary_key)
-                            response = client_sec.models.generate_content(
-                                model=target_model,
-                                contents=prompt,
-                                config=types.GenerateContentConfig(
-                                    temperature=temperature,
-                                    max_output_tokens=max_output_tokens,
+                return response.text or ""
+            except Exception as e:
+                if self.is_unavailable_error(e) and attempt < MAX_RETRIES - 1:
+                    print(f"[GEMINI API MANAGER] 503 UNAVAILABLE on attempt {attempt+1}/{MAX_RETRIES}. Retrying in {RETRY_DELAY}s...")
+                    time.sleep(RETRY_DELAY)
+                    continue
+                if self.is_rate_limit_error(e):
+                    if role == "PRIMARY":
+                        self.mark_primary_cooldown()
+                        if self.secondary_key:
+                            print("[GEMINI API MANAGER] Retrying request immediately with Secondary API Key...")
+                            try:
+                                client_sec = self._get_cached_client(self.secondary_key)
+                                response = client_sec.models.generate_content(
+                                    model=target_model,
+                                    contents=prompt,
+                                    config=types.GenerateContentConfig(
+                                        temperature=temperature,
+                                        max_output_tokens=max_output_tokens,
+                                    )
                                 )
-                            )
-                            return response.text or ""
-                        except Exception as sec_e:
-                            if self.is_rate_limit_error(sec_e):
-                                raise APIKeysExhaustedError("All Gemini API keys exhausted (429 / ResourceExhausted). Both Primary and Secondary keys are rate limited.") from sec_e
-                            raise sec_e
+                                return response.text or ""
+                            except Exception as sec_e:
+                                if self.is_rate_limit_error(sec_e):
+                                    raise APIKeysExhaustedError("All Gemini API keys exhausted (429 / ResourceExhausted). Both Primary and Secondary keys are rate limited.") from sec_e
+                                raise sec_e
+                        else:
+                            raise APIKeysExhaustedError("GEMINI_PRIMARY_KEY rate limited (429) and no GEMINI_SECONDARY_KEY configured.") from e
                     else:
-                        raise APIKeysExhaustedError("GEMINI_PRIMARY_KEY rate limited (429) and no GEMINI_SECONDARY_KEY configured.") from e
-                else:
-                    raise APIKeysExhaustedError("All Gemini API keys exhausted (429 / ResourceExhausted). Primary key in cooldown and Secondary key rate limited.") from e
-            raise e
+                        raise APIKeysExhaustedError("All Gemini API keys exhausted (429 / ResourceExhausted). Primary key in cooldown and Secondary key rate limited.") from e
+                raise e
+        raise RuntimeError(f"Failed after {MAX_RETRIES} retries due to 503 UNAVAILABLE.")
 
     def stream_with_fallback(
         self,
@@ -131,52 +145,59 @@ class GeminiKeyManager:
         model_name: Optional[str] = None
     ) -> Generator[str, None, None]:
         """
-        Streams LLM response chunk by chunk using native google.genai SDK with automatic key failover.
+        Streams LLM response chunk by chunk with automatic key failover and 503 retry logic.
         """
         active_key, role = self.get_active_key()
         target_model = model_name or settings.GEMINI_MODEL
-        try:
-            client = self._get_cached_client(active_key)
-            res_stream = client.models.generate_content_stream(
-                model=target_model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=temperature,
-                    max_output_tokens=max_output_tokens,
+        for attempt in range(MAX_RETRIES):
+            try:
+                client = self._get_cached_client(active_key)
+                res_stream = client.models.generate_content_stream(
+                    model=target_model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=temperature,
+                        max_output_tokens=max_output_tokens,
+                    )
                 )
-            )
-            for chunk in res_stream:
-                if chunk.text:
-                    yield chunk.text
-        except Exception as e:
-            if self.is_rate_limit_error(e):
-                if role == "PRIMARY":
-                    self.mark_primary_cooldown()
-                    if self.secondary_key:
-                        print("[GEMINI API MANAGER] Retrying streaming request with Secondary API Key...")
-                        try:
-                            client_sec = self._get_cached_client(self.secondary_key)
-                            res_stream = client_sec.models.generate_content_stream(
-                                model=target_model,
-                                contents=prompt,
-                                config=types.GenerateContentConfig(
-                                    temperature=temperature,
-                                    max_output_tokens=max_output_tokens,
+                for chunk in res_stream:
+                    if chunk.text:
+                        yield chunk.text
+                return  # success
+            except Exception as e:
+                if self.is_unavailable_error(e) and attempt < MAX_RETRIES - 1:
+                    print(f"[GEMINI API MANAGER] 503 UNAVAILABLE on stream attempt {attempt+1}/{MAX_RETRIES}. Retrying in {RETRY_DELAY}s...")
+                    time.sleep(RETRY_DELAY)
+                    continue
+                if self.is_rate_limit_error(e):
+                    if role == "PRIMARY":
+                        self.mark_primary_cooldown()
+                        if self.secondary_key:
+                            print("[GEMINI API MANAGER] Retrying streaming request with Secondary API Key...")
+                            try:
+                                client_sec = self._get_cached_client(self.secondary_key)
+                                res_stream = client_sec.models.generate_content_stream(
+                                    model=target_model,
+                                    contents=prompt,
+                                    config=types.GenerateContentConfig(
+                                        temperature=temperature,
+                                        max_output_tokens=max_output_tokens,
+                                    )
                                 )
-                            )
-                            for chunk in res_stream:
-                                if chunk.text:
-                                    yield chunk.text
-                            return
-                        except Exception as sec_e:
-                            if self.is_rate_limit_error(sec_e):
-                                raise APIKeysExhaustedError("All Gemini API keys exhausted (429 / ResourceExhausted).") from sec_e
-                            raise sec_e
+                                for chunk in res_stream:
+                                    if chunk.text:
+                                        yield chunk.text
+                                return
+                            except Exception as sec_e:
+                                if self.is_rate_limit_error(sec_e):
+                                    raise APIKeysExhaustedError("All Gemini API keys exhausted (429 / ResourceExhausted).") from sec_e
+                                raise sec_e
+                        else:
+                            raise APIKeysExhaustedError("GEMINI_PRIMARY_KEY rate limited (429) and no GEMINI_SECONDARY_KEY configured.") from e
                     else:
-                        raise APIKeysExhaustedError("GEMINI_PRIMARY_KEY rate limited (429) and no GEMINI_SECONDARY_KEY configured.") from e
-                else:
-                    raise APIKeysExhaustedError("All Gemini API keys exhausted (429 / ResourceExhausted). Primary key in cooldown and Secondary key rate limited.") from e
-            raise e
+                        raise APIKeysExhaustedError("All Gemini API keys exhausted (429 / ResourceExhausted). Primary key in cooldown and Secondary key rate limited.") from e
+                raise e
+        raise RuntimeError(f"Stream failed after {MAX_RETRIES} retries due to 503 UNAVAILABLE.")
 
     def get_status(self) -> dict:
         with self._lock:
