@@ -6,6 +6,9 @@ import Auth from './Auth';
 import VisualizationDashboard from './VisualizationDashboard';
 
 
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+axios.defaults.baseURL = API_URL;
+
 const COLORS = ['#6366f1', '#a855f7', '#ec4899', '#f43f5e', '#f97316'];
 
 const MarkdownFormatter = ({ content }: { content: string }) => {
@@ -777,7 +780,7 @@ const App = () => {
         }]);
 
         try {
-            const response = await fetch('/api/v1/chat/stream_chat', {
+            const response = await fetch(`${API_URL}/api/v1/chat/stream_chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
