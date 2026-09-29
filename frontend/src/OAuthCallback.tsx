@@ -1,9 +1,6 @@
 import React, { useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
 
 const OAuthCallback = ({ onLogin }: { onLogin: (user: any) => void }) => {
-    const navigate = useNavigate();
-
     useEffect(() => {
         const handleCallback = async () => {
             // Get the authorization code from URL
@@ -13,7 +10,7 @@ const OAuthCallback = ({ onLogin }: { onLogin: (user: any) => void }) => {
 
             if (!code || !provider) {
                 console.error('Missing OAuth code or provider');
-                navigate('/');
+                window.location.href = '/';
                 return;
             }
 
@@ -38,15 +35,15 @@ const OAuthCallback = ({ onLogin }: { onLogin: (user: any) => void }) => {
 
                 // Login with user data
                 onLogin(userData);
-                navigate('/');
+                window.location.href = '/';
             } catch (error) {
                 console.error('OAuth callback error:', error);
-                navigate('/');
+                window.location.href = '/';
             }
         };
 
         handleCallback();
-    }, [navigate, onLogin]);
+    }, [onLogin]);
 
     return (
         <div className="min-h-screen bg-[#0a0a0c] flex items-center justify-center">

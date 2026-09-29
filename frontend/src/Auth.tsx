@@ -93,7 +93,7 @@ const NeuralNetworkBackground = () => {
 
 const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string }) => {
     const [isLogin, setIsLogin] = useState(true);
-    const [formData, setFormData] = useState({ email: '', password: '', name: '', profession: '', phone: '' });
+    const [formData, setFormData] = useState({ email: '', password: '', name: '', profession: '', phone: '', institution: '', field_of_study: '' });
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
@@ -111,7 +111,9 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                     password: formData.password,
                     name: formData.name,
                     profession: formData.profession,
-                    phone: formData.phone
+                    phone: formData.phone,
+                    institution: formData.institution,
+                    field_of_study: formData.field_of_study
                 };
 
             const response = await fetch(endpoint, {
@@ -357,7 +359,7 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                             {!isLogin && (
                                 <div className="grid grid-cols-2 gap-4">
                                     <div className="space-y-2">
-                                        <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 ml-1">Work</label>
+                                        <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 ml-1">Profession / Role</label>
                                         <input
                                             type="text"
                                             placeholder="Researcher"
@@ -369,9 +371,32 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                                         <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 ml-1">Phone</label>
                                         <input
                                             type="text"
-                                            placeholder="+1..."
+                                            placeholder="+91..."
                                             className="w-full bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 px-4 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600"
                                             onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                                        />
+                                    </div>
+                                </div>
+                            )}
+
+                            {!isLogin && (
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 ml-1">Institution / University</label>
+                                        <input
+                                            type="text"
+                                            placeholder="MIT / Parul University"
+                                            className="w-full bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 px-4 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600"
+                                            onChange={(e) => setFormData({ ...formData, institution: e.target.value })}
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-semibold text-slate-700 dark:text-slate-300 ml-1">Field of Study</label>
+                                        <input
+                                            type="text"
+                                            placeholder="AI & Data Science"
+                                            className="w-full bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 px-4 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600"
+                                            onChange={(e) => setFormData({ ...formData, field_of_study: e.target.value })}
                                         />
                                     </div>
                                 </div>

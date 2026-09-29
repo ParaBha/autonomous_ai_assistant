@@ -72,19 +72,19 @@ html[data-theme="dark"] h4, html[data-theme="dark"] h5, html[data-theme="dark"] 
     color: #ffffff !important;
 }
 
-/* Specific "Darker" Headings for Insights and Settings Page */
-.dark .insights-page h1, .dark .insights-page h2, .dark .insights-page h3, 
-.dark .insights-page h4, .dark .insights-page h5, .dark .insights-page h6,
-.dark .settings-page h3, .dark .settings-page h4, .dark .settings-page h5, .dark .settings-page h6,
-html[data-theme="dark"] .insights-page h1, html[data-theme="dark"] .insights-page h2, 
-html[data-theme="dark"] .insights-page h3, html[data-theme="dark"] .insights-page h4,
-html[data-theme="dark"] .settings-page h3, html[data-theme="dark"] .settings-page h4 {
-    color: #1e293b !important; /* slate-800 - Much Darker */
+.dark p, html[data-theme="dark"] p {
+    color: #e2e8f0;
 }
 
-/* Lighter Heading for Settings Title */
-.dark .settings-page h2, html[data-theme="dark"] .settings-page h2,
-.dark .settings-page h1, html[data-theme="dark"] .settings-page h1 {
+/* Ensure clean contrast in dark mode across all pages */
+.dark .insights-page h1, .dark .insights-page h2, .dark .insights-page h3, 
+.dark .insights-page h4, .dark .insights-page h5, .dark .insights-page h6,
+.dark .settings-page h1, .dark .settings-page h2, .dark .settings-page h3, 
+.dark .settings-page h4, .dark .settings-page h5, .dark .settings-page h6,
+html[data-theme="dark"] .insights-page h1, html[data-theme="dark"] .insights-page h2, 
+html[data-theme="dark"] .insights-page h3, html[data-theme="dark"] .insights-page h4,
+html[data-theme="dark"] .settings-page h1, html[data-theme="dark"] .settings-page h2,
+html[data-theme="dark"] .settings-page h3, html[data-theme="dark"] .settings-page h4 {
     color: #ffffff !important;
 }
 
@@ -92,8 +92,20 @@ html[data-theme="dark"] .settings-page h3, html[data-theme="dark"] .settings-pag
 .dark .settings-page p, .dark .settings-page .prose-ai,
 html[data-theme="dark"] .insights-page p, html[data-theme="dark"] .insights-page .prose-ai,
 html[data-theme="dark"] .settings-page p, html[data-theme="dark"] .settings-page .prose-ai {
-    color: #334155 !important; /* slate-700 - Darker Subheadings/Text */
+    color: #cbd5e1 !important;
 }
+
+/* Recharts Dark Mode High Visibility Overrides */
+.dark .recharts-legend-item-text, html[data-theme="dark"] .recharts-legend-item-text {
+    color: #f8fafc !important;
+    font-weight: 600 !important;
+}
+
+.dark .recharts-text, html[data-theme="dark"] .recharts-text,
+.dark tspan, html[data-theme="dark"] tspan {
+    fill: #cbd5e1 !important;
+}
+
 
 
 /* Custom Scrollbar */

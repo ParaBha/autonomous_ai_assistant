@@ -1,0 +1,201 @@
+import time
+import threading
+from typing import Optional, Generator
+from google import genai
+from google.genai import types
+from app.core.config import settings
+
+class APIKeysExhaustedError(Exception):
+    """Raised when all configured Gemini API keys are exhausted due to rate limits (429 / ResourceExhausted)."""
+    pass
+
+class GeminiKeyManager:
+    """
+    Thread-safe & async-compatible API Key Manager for Gemini LLM calls using native google.genai SDK.
+    - Defaults to GEMINI_PRIMARY_KEY.
+    - On 429 / ResourceExhausted errors, instantly triggers a 60-second cooldown for Primary
+      and switches execution to GEMINI_SECONDARY_KEY.
+    - Automatically resumes using GEMINI_PRIMARY_KEY once the 60-second cooldown timer expires.
+    - Raises APIKeysExhaustedError if both keys are exhausted simultaneously.
+    """
+    def __init__(self):
+        self.primary_key: str = settings.get_primary_key()
+        self.secondary_key: str = settings.get_secondary_key()
+        self.primary_cooldown_until: float = 0.0
+        self.cooldown_duration: float = float(settings.GEMINI_COOLDOWN_SECONDS)
+        self._lock = threading.Lock()
+        self._client_cache: dict = {}  # Cache genai.Client instances per API key
+
+    def reload_keys(self, primary: Optional[str] = None, secondary: Optional[str] = None):
+        with self._lock:
+            if primary is not None:
+                self.primary_key = primary.strip()
+            else:
+                self.primary_key = settings.get_primary_key()
+
+            if secondary is not None:
+                self.secondary_key = secondary.strip()
+            else:
+                self.secondary_key = settings.get_secondary_key()
+            self.primary_cooldown_until = 0.0
+            self._client_cache.clear()
+
+    def is_primary_on_cooldown(self) -> bool:
+        with self._lock:
+            return time.time() < self.primary_cooldown_until
+
+    def mark_primary_cooldown(self):
+        with self._lock:
+            self.primary_cooldown_until = time.time() + self.cooldown_duration
+            print(f"[GEMINI API MANAGER] Primary API key rate limited (429 / ResourceExhausted). Initiating {int(self.cooldown_duration)}s cooldown. Switching to Secondary key.")
+
+    def get_active_key(self) -> tuple[str, str]:
+        """
+        Returns (key_string, role_name)
+        role_name is 'PRIMARY' or 'SECONDARY'
+        """
+        with self._lock:
+            now = time.time()
+            if now >= self.primary_cooldown_until:
+                if self.primary_key:
+                    return self.primary_key, "PRIMARY"
+            if self.secondary_key:
+                return self.secondary_key, "SECONDARY"
+            return self.primary_key, "PRIMARY"
+
+    def is_rate_limit_error(self, e: Exception) -> bool:
+        err_msg = str(e).lower()
+        return any(term in err_msg for term in ["429", "resource_exhausted", "resourceexhausted", "quota", "rate limit"])
+
+    def _get_cached_client(self, key: str) -> genai.Client:
+        """Return a cached google.genai.Client instance."""
+        if key not in self._client_cache:
+            self._client_cache[key] = genai.Client(api_key=key)
+        return self._client_cache[key]
+
+    def invoke_with_fallback(
+        self,
+        prompt: str,
+        temperature: float = 0.1,
+        max_output_tokens: int = 1024,
+        model_name: Optional[str] = None
+    ) -> str:
+        """
+        Invokes LLM with automatic Primary -> Secondary key failover on 429 errors.
+        """
+        active_key, role = self.get_active_key()
+        target_model = model_name or settings.GEMINI_MODEL
+        try:
+            client = self._get_cached_client(active_key)
+            response = client.models.generate_content(
+                model=target_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                )
+            )
+            return response.text or ""
+        except Exception as e:
+            if self.is_rate_limit_error(e):
+                if role == "PRIMARY":
+                    self.mark_primary_cooldown()
+                    if self.secondary_key:
+                        print("[GEMINI API MANAGER] Retrying request immediately with Secondary API Key...")
+                        try:
+                            client_sec = self._get_cached_client(self.secondary_key)
+                            response = client_sec.models.generate_content(
+                                model=target_model,
+                                contents=prompt,
+                                config=types.GenerateContentConfig(
+                                    temperature=temperature,
+                                    max_output_tokens=max_output_tokens,
+                                )
+                            )
+                            return response.text or ""
+                        except Exception as sec_e:
+                            if self.is_rate_limit_error(sec_e):
+                                raise APIKeysExhaustedError("All Gemini API keys exhausted (429 / ResourceExhausted). Both Primary and Secondary keys are rate limited.") from sec_e
+                            raise sec_e
+                    else:
+                        raise APIKeysExhaustedError("GEMINI_PRIMARY_KEY rate limited (429) and no GEMINI_SECONDARY_KEY configured.") from e
+                else:
+                    raise APIKeysExhaustedError("All Gemini API keys exhausted (429 / ResourceExhausted). Primary key in cooldown and Secondary key rate limited.") from e
+            raise e
+
+    def stream_with_fallback(
+        self,
+        prompt: str,
+        temperature: float = 0.1,
+        max_output_tokens: int = 1024,
+        model_name: Optional[str] = None
+    ) -> Generator[str, None, None]:
+        """
+        Streams LLM response chunk by chunk using native google.genai SDK with automatic key failover.
+        """
+        active_key, role = self.get_active_key()
+        target_model = model_name or settings.GEMINI_MODEL
+        try:
+            client = self._get_cached_client(active_key)
+            res_stream = client.models.generate_content_stream(
+                model=target_model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                )
+            )
+            for chunk in res_stream:
+                if chunk.text:
+                    yield chunk.text
+        except Exception as e:
+            if self.is_rate_limit_error(e):
+                if role == "PRIMARY":
+                    self.mark_primary_cooldown()
+                    if self.secondary_key:
+                        print("[GEMINI API MANAGER] Retrying streaming request with Secondary API Key...")
+                        try:
+                            client_sec = self._get_cached_client(self.secondary_key)
+                            res_stream = client_sec.models.generate_content_stream(
+                                model=target_model,
+                                contents=prompt,
+                                config=types.GenerateContentConfig(
+                                    temperature=temperature,
+                                    max_output_tokens=max_output_tokens,
+                                )
+                            )
+                            for chunk in res_stream:
+                                if chunk.text:
+                                    yield chunk.text
+                            return
+                        except Exception as sec_e:
+                            if self.is_rate_limit_error(sec_e):
+                                raise APIKeysExhaustedError("All Gemini API keys exhausted (429 / ResourceExhausted).") from sec_e
+                            raise sec_e
+                    else:
+                        raise APIKeysExhaustedError("GEMINI_PRIMARY_KEY rate limited (429) and no GEMINI_SECONDARY_KEY configured.") from e
+                else:
+                    raise APIKeysExhaustedError("All Gemini API keys exhausted (429 / ResourceExhausted). Primary key in cooldown and Secondary key rate limited.") from e
+            raise e
+
+    def get_status(self) -> dict:
+        with self._lock:
+            now = time.time()
+            on_cooldown = now < self.primary_cooldown_until
+            remaining_cooldown = max(0.0, round(self.primary_cooldown_until - now, 1)) if on_cooldown else 0.0
+            active_key, active_role = self.get_active_key()
+            
+            def mask_key(k: str) -> str:
+                return (k[:6] + "..." + k[-4:]) if len(k) > 10 else ("Configured" if k else "Not set")
+
+            return {
+                "primary_key_status": f"Cooldown ({remaining_cooldown}s remaining)" if on_cooldown else "Active",
+                "secondary_key_status": "Active" if self.secondary_key else "Not configured",
+                "active_key_role": active_role,
+                "active_key_masked": mask_key(active_key),
+                "cooldown_remaining_seconds": remaining_cooldown,
+                "current_model": settings.GEMINI_MODEL
+            }
+
+gemini_key_manager = GeminiKeyManager()
+

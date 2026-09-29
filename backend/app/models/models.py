@@ -12,6 +12,11 @@ class User(Base):
     profession = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     avatar_url = Column(String, nullable=True)
+    institution = Column(String, nullable=True)
+    field_of_study = Column(String, nullable=True)
+    research_interests = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class Document(Base):
     __tablename__ = "documents"

@@ -1,60 +1,47 @@
 import os
+import json
+import asyncio
 import traceback
 from typing import List, Dict, Any, Optional
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 from langchain_community.vectorstores import Chroma
+
 from app.core.config import settings
+from app.services.gemini_rotator import gemini_key_manager, APIKeysExhaustedError
 
 class RAGService:
     def __init__(self):
         self._embeddings = None
-        self._llm = None
-        self._vector_db = None  # Cached Chroma instance
+        self._vector_db = None
         self.model_name = settings.GEMINI_MODEL
-        self.fallback_models = ["gemini-flash-latest", "gemini-2.0-flash", "gemini-pro-latest"]
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=100
+            chunk_size=800,
+            chunk_overlap=50
         )
         self.vector_db_path = "chroma_db"
+        try:
+            self._get_vector_db()
+        except Exception as e:
+            print(f"Pre-warm vector db notice: {e}")
 
     @property
     def embeddings(self):
         if self._embeddings is None:
+            active_key, _ = gemini_key_manager.get_active_key()
             self._embeddings = GoogleGenerativeAIEmbeddings(
                 model="models/gemini-embedding-001",
-                google_api_key=settings.GEMINI_API_KEY
+                google_api_key=active_key or settings.get_primary_key()
             )
         return self._embeddings
 
-    @property
-    def llm(self):
-        if self._llm is None:
-            self._llm = self._get_llm(self.model_name)
-        return self._llm
-
-    def _get_llm(self, model_name: str):
-        return ChatGoogleGenerativeAI(
-            model=model_name,
-            google_api_key=settings.GEMINI_API_KEY,
-            max_retries=3,
-        )
-
-    def _get_content(self, response) -> str:
-        if isinstance(response.content, str):
-            return response.content
-        if isinstance(response.content, list):
-            return "".join([part.get("text", "") if isinstance(part, dict) else str(part) for part in response.content])
-        return str(response.content)
-
     def invalidate_cache(self):
-        """Invalidate the cached vector DB so it's rebuilt on the next query."""
+        """Invalidate cached vector DB instance."""
         self._vector_db = None
+        self._embeddings = None
 
     def _get_vector_db(self):
-        """Return cached ChromaDB instance, creating it only when needed."""
+        """Return cached ChromaDB instance."""
         if self._vector_db is None and os.path.exists(self.vector_db_path):
             self._vector_db = Chroma(
                 persist_directory=self.vector_db_path,
@@ -68,97 +55,136 @@ class RAGService:
             metadatas = [metadata or {} for _ in chunks]
             for meta in metadatas:
                 meta["document_id"] = document_id
-                
+
             Chroma.from_texts(
                 texts=chunks,
                 embedding=self.embeddings,
                 persist_directory=self.vector_db_path,
                 metadatas=metadatas
             )
-            self.invalidate_cache()  # Force rebuild on next query
+            self.invalidate_cache()
         except Exception as e:
             print(f"Error in process_and_store: {str(e)}")
             traceback.print_exc()
 
     def query(self, question: str, chat_history: List[tuple] = [], document_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Executes a direct single-pass research query over retrieved document context.
+        """
+        vector_db = self._get_vector_db()
         sources = []
-        prompt = question
+        context = ""
+
+        if vector_db is not None:
+            filter_dict = {"document_id": str(document_id)} if document_id else None
+            try:
+                docs = vector_db.similarity_search(question, k=2, filter=filter_dict)
+                if docs:
+                    context = "\n\n".join([doc.page_content for doc in docs])
+                    sources = [{"content": doc.page_content, **doc.metadata} for doc in docs]
+            except Exception as e:
+                print(f"RAG search error: {e}")
+
+        prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
+Answer the user's research question clearly, accurately, and directly based on the provided document context.
+
+Context from Uploaded Research Documents:
+{context if context else 'No document context. Provide a clear, insightful general research answer.'}
+
+User Question: {question}
+
+Research Response:"""
+
         try:
-            vector_db = self._get_vector_db()
-            if vector_db is None:
-                # No documents indexed yet — use LLM directly (fast path)
-                response = self.llm.invoke(question)
-                return {
-                    "answer": self._get_content(response),
-                    "sources": []
-                }
-
-            # Add filtering if document_id is provided
-            filter_dict = {"document_id": document_id} if document_id else None
-            docs = vector_db.similarity_search(question, k=3, filter=filter_dict)
-            context = "\n\n".join([doc.page_content for doc in docs])
-            
-            prompt = f"""
-            You are an Autonomous AI Research Assistant. Use the following pieces of context to answer the user's question.
-            If you don't know the answer, just say that you don't know, don't try to make up an answer.
-            
-            Context:
-            {context}
-            
-            Question: {question}
-            
-            Answer:"""
-            
-            response = self.llm.invoke(prompt)
-            
-            return {
-                "answer": self._get_content(response),
-                "sources": [{"content": doc.page_content, **doc.metadata} for doc in docs]
-            }
+            answer = gemini_key_manager.invoke_with_fallback(prompt, temperature=0.1, max_output_tokens=1024)
+            return {"answer": answer, "sources": sources}
+        except APIKeysExhaustedError:
+            raise
         except Exception as e:
-            return self._handle_query_error(e, prompt, sources)
+            print(f"Query execution error: {e}")
+            return {"answer": f"Error during query execution: {str(e)}", "sources": sources}
 
-    def stream_query(self, question: str, chat_history: List[tuple] = [], document_id: Optional[str] = None):
-        """Generator for streaming chat responses (uses cached vector DB for speed)."""
-        import json
-        try:
-            vector_db = self._get_vector_db()
-            if vector_db is None:
-                # No documents — stream LLM response directly (fast path)
-                for chunk in self.llm.stream(question):
-                    yield self._get_content(chunk)
-                return
+    def _sync_stream_query(self, question: str, chat_history: List[tuple], document_id: Optional[Any]):
+        """
+        Synchronous generator — called from a thread pool via stream_query (async).
+        Yields text chunks or __SOURCES__ metadata lines.
+        """
+        vector_db = self._get_vector_db()
+        sources = []
+        context = ""
+        doc_id_str = str(document_id) if document_id is not None else None
 
-            filter_dict = {"document_id": document_id} if document_id else None
-            docs = vector_db.similarity_search(question, k=3, filter=filter_dict)
-            context = "\n\n".join([doc.page_content for doc in docs])
-            
-            prompt = f"""
-            You are an Autonomous AI Research Assistant. Use the following context to answer.
-            Context: {context}
-            Question: {question}
-            Answer:"""
-            
-            # Send source metadata first as a special JSON chunk
-            sources = [{"filename": doc.metadata.get("filename", "Unknown"), "document_id": doc.metadata.get("document_id")} for doc in docs]
-            yield f"__SOURCES__:{json.dumps(sources)}\n"
-            
-            for chunk in self.llm.stream(prompt):
-                yield self._get_content(chunk)
-                
-        except Exception as e:
-            yield f"Error: {str(e)}"
+        if vector_db is not None:
+            filter_dict = {"document_id": doc_id_str} if doc_id_str else None
+            try:
+                docs = vector_db.similarity_search(question, k=2, filter=filter_dict)
+                if docs:
+                    context = "\n\n".join([f"Source ({doc.metadata.get('filename', 'Doc')}): {doc.page_content[:1000]}" for doc in docs])
+                    sources = [{"filename": doc.metadata.get("filename", "Unknown"), "document_id": doc.metadata.get("document_id")} for doc in docs]
+                    yield f"__SOURCES__:{json.dumps(sources)}\n"
+            except Exception as e:
+                print(f"Similarity search notice: {e}")
 
-    def _handle_query_error(self, e, prompt, sources):
-        error_str = str(e)
-        if "429" in error_str or "RESOURCE_EXHAUSTED" in error_str:
-            for fallback in self.fallback_models:
-                if fallback == self.model_name: continue
+        # Fallback to DB lookup if specific document selected but no vector context retrieved
+        if doc_id_str and not context:
+            try:
+                from app.db.database import SessionLocal
+                from app.models.models import Document as DocumentModel
+                db = SessionLocal()
                 try:
-                    fallback_llm = self._get_llm(fallback)
-                    response = fallback_llm.invoke(prompt)
-                    return {"answer": self._get_content(response), "sources": sources}
-                except: continue
-        return {"answer": f"Error: {error_str}", "sources": []}
+                    db_doc = db.query(DocumentModel).filter(DocumentModel.id == int(doc_id_str)).first()
+                    if db_doc and db_doc.extracted_text:
+                        context = f"Source ({db_doc.filename}): {db_doc.extracted_text[:5000]}"
+                        sources = [{"filename": db_doc.filename, "document_id": str(db_doc.id)}]
+                        yield f"__SOURCES__:{json.dumps(sources)}\n"
+                finally:
+                    db.close()
+            except Exception as ex:
+                print(f"DB fallback error: {ex}")
+
+        prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
+Answer the user's research question clearly, accurately, and directly based on the provided document context.
+
+Context from Uploaded Research Documents:
+{context if context else 'No specific document attached. Provide a clear, insightful general research answer.'}
+
+User Question: {question}
+
+Research Response:"""
+
+        try:
+            for chunk in gemini_key_manager.stream_with_fallback(prompt, temperature=0.1, max_output_tokens=1024):
+                yield chunk
+        except APIKeysExhaustedError:
+            yield "\n\n[ERROR: 429 Rate Limit - All Gemini API keys are currently exhausted. Primary key is under a 60-second cooldown.]"
+        except Exception as e:
+            yield f"\n\n[Error: {str(e)}]"
+
+    async def stream_query(self, question: str, chat_history: List[tuple] = [], document_id: Optional[Any] = None):
+        """
+        Async generator — runs the blocking sync stream in a thread pool
+        and uses the running event loop to put chunks into an asyncio.Queue safely.
+        """
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        _DONE = object()
+
+        def _run_sync():
+            try:
+                for chunk in self._sync_stream_query(question, chat_history, document_id):
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+            except Exception as ex:
+                loop.call_soon_threadsafe(queue.put_nowait, f"\n\n[Error: {str(ex)}]")
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+
+        loop.run_in_executor(None, _run_sync)
+
+        while True:
+            item = await queue.get()
+            if item is _DONE:
+                break
+            yield item
+
 
 rag_service = RAGService()
