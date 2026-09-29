@@ -2,8 +2,6 @@ import fitz  # PyMuPDF
 import docx
 from pptx import Presentation
 import pandas as pd
-import pytesseract
-from PIL import Image
 import os
 import io
 from app.core.config import settings
@@ -39,8 +37,15 @@ class IngestionService:
 
     @staticmethod
     def extract_text_from_image(file_path: str) -> str:
-        img = Image.open(file_path)
-        return pytesseract.image_to_string(img)
+        try:
+            from PIL import Image
+            import pytesseract
+            img = Image.open(file_path)
+            return pytesseract.image_to_string(img)
+        except ImportError:
+            return "OCR error: PIL or pytesseract not installed."
+        except Exception as e:
+            return f"OCR error: {str(e)}. Please ensure Tesseract OCR is installed on the system."
 
     @classmethod
     def process_file(cls, file_path: str) -> str:
