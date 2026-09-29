@@ -16,7 +16,8 @@ const OAuthCallback = ({ onLogin }: { onLogin: (user: any) => void }) => {
 
             try {
                 // Exchange code for access token via backend
-                const response = await fetch(`http://localhost:8000/api/v1/auth/oauth/${provider}/callback`, {
+                const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+                const response = await fetch(`${API_URL}/api/v1/auth/oauth/${provider}/callback`, {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
