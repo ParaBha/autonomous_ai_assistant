@@ -96,30 +96,47 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
     const [formData, setFormData] = useState({ email: '', password: '', name: '', profession: '', phone: '', institution: '', field_of_study: '' });
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [warmingServer, setWarmingServer] = useState(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
         setIsLoading(true);
+        setWarmingServer(false);
 
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+        const endpoint = isLogin ? `${API_URL}/api/v1/auth/signin` : `${API_URL}/api/v1/auth/signup`;
+        const payload = isLogin
+            ? { email: formData.email.trim().toLowerCase(), password: formData.password }
+            : {
+                email: formData.email.trim().toLowerCase(),
+                password: formData.password,
+                name: formData.name,
+                profession: formData.profession,
+                phone: formData.phone,
+                institution: formData.institution,
+                field_of_study: formData.field_of_study
+            };
+
+        // Step 1: Ping the server to wake it up if it's sleeping (Render free tier cold start)
+        try {
+            console.log('[Auth] Pinging server at:', API_URL);
+            const pingController = new AbortController();
+            const pingTimeout = setTimeout(() => pingController.abort(), 3000);
+            await fetch(`${API_URL}/`, { signal: pingController.signal }).catch(() => {});
+            clearTimeout(pingTimeout);
+        } catch {
+            // Server might be waking up — continue anyway
+        }
+
+        // Step 2: Submit auth request with generous timeout for cold starts
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+        const TIMEOUT_MS = 90000; // 90s to accommodate Render free-tier cold start
+
+        // Show warming message after 3 seconds if still waiting
+        const warmingTimer = setTimeout(() => setWarmingServer(true), 3000);
 
         try {
-            const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
-            const endpoint = isLogin ? `${API_URL}/api/v1/auth/signin` : `${API_URL}/api/v1/auth/signup`;
-            const payload = isLogin
-                ? { email: formData.email.trim().toLowerCase(), password: formData.password }
-                : {
-                    email: formData.email.trim().toLowerCase(),
-                    password: formData.password,
-                    name: formData.name,
-                    profession: formData.profession,
-                    phone: formData.phone,
-                    institution: formData.institution,
-                    field_of_study: formData.field_of_study
-                };
-
             console.log('[Auth] Submitting to:', endpoint);
 
             const response = await fetch(endpoint, {
@@ -129,7 +146,8 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                 signal: controller.signal,
             });
 
-            clearTimeout(timeoutId);
+            clearTimeout(warmingTimer);
+            setWarmingServer(false);
             console.log('[Auth] Response status:', response.status);
 
             if (!response.ok) {
@@ -148,26 +166,33 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
             const userData = await response.json();
             console.log('[Auth] Login success, user:', userData.email);
 
-            // Store user data in localStorage for session persistence
             localStorage.setItem('user', JSON.stringify(userData));
-            // Also store access_token separately — App.tsx reads this key to keep session alive on reload
             if (userData.access_token) {
                 localStorage.setItem('access_token', userData.access_token);
             }
 
             onLogin(userData);
         } catch (err: any) {
-            clearTimeout(timeoutId);
+            clearTimeout(warmingTimer);
+            setWarmingServer(false);
             if (err.name === 'AbortError') {
-                setError('Request timed out. The server took too long to respond. Please try again.');
+                setError('Connection timed out. Please check your internet and try again.');
+            } else if (err.message?.includes('Failed to fetch') || err.message?.includes('NetworkError')) {
+                setError('Cannot reach the server. Please try again in a few seconds.');
             } else {
                 setError(err.message || 'An error occurred. Please try again.');
             }
             console.error('[Auth] Auth error:', err);
         } finally {
             setIsLoading(false);
+            setWarmingServer(false);
         }
+
+        // Clear abort controller after TIMEOUT_MS (unused signals don't block GC but good practice)
+        const _cleanup = setTimeout(() => controller.abort(), TIMEOUT_MS);
+        return () => clearTimeout(_cleanup);
     };
+
 
     // OAuth Configuration
     const oauthConfig = {
@@ -462,12 +487,25 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                                 </div>
                             )}
 
+                            {warmingServer && !error && (
+                                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-amber-700 dark:text-amber-400 text-sm font-medium flex items-center gap-2 animate-in fade-in">
+                                    <svg className="animate-spin shrink-0" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24">
+                                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                                    </svg>
+                                    Waking server from sleep — this takes ~30s on first load. Please wait…
+                                </div>
+                            )}
+
                             <button
                                 type="submit"
                                 disabled={isLoading}
                                 className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold py-4 rounded-2xl shadow-xl shadow-indigo-600/20 transition-all transform hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2 mt-6 disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                                {isLoading ? 'Processing...' : (isLogin ? 'Ignite Dashboard' : 'Launch Workspace')}
+                                {isLoading
+                                    ? (warmingServer ? 'Waking Server...' : 'Processing...')
+                                    : (isLogin ? 'Ignite Dashboard' : 'Launch Workspace')
+                                }
                                 <Zap size={20} className="font-bold fill-white" />
                             </button>
                         </form>
