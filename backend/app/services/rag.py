@@ -71,20 +71,22 @@ class RAGService:
         """
         Executes a direct single-pass research query over retrieved document context.
         """
-        vector_db = self._get_vector_db()
         sources = []
         context = ""
 
-        if vector_db is not None:
-            filter_dict = {"document_id": str(document_id)} if document_id else None
-            try:
-                if vector_db._collection.count() > 0:
-                    docs = vector_db.similarity_search(question, k=2, filter=filter_dict)
-                    if docs:
-                        context = "\n\n".join([doc.page_content for doc in docs])
-                        sources = [{"content": doc.page_content, **doc.metadata} for doc in docs]
-            except Exception as e:
-                print(f"RAG search error: {e}")
+        # Only hit ChromaDB if the user has a specific document selected
+        if document_id is not None:
+            vector_db = self._get_vector_db()
+            if vector_db is not None:
+                filter_dict = {"document_id": str(document_id)}
+                try:
+                    if vector_db._collection.count() > 0:
+                        docs = vector_db.similarity_search(question, k=3, filter=filter_dict)
+                        if docs:
+                            context = "\n\n".join([doc.page_content for doc in docs])
+                            sources = [{"content": doc.page_content, **doc.metadata} for doc in docs]
+                except Exception as e:
+                    print(f"RAG search error: {e}")
 
         prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
 Your task is to provide complete, highly thorough, articulate, and accurate research responses.
@@ -103,7 +105,7 @@ User Question: {question}
 Research Response:"""
 
         try:
-            answer = gemini_key_manager.invoke_with_fallback(prompt, temperature=0.5, max_output_tokens=8192)
+            answer = gemini_key_manager.invoke_with_fallback(prompt, temperature=0.5, max_output_tokens=4096)
             return {"answer": answer, "sources": sources}
         except APIKeysExhaustedError:
             raise
@@ -116,40 +118,41 @@ Research Response:"""
         Synchronous generator — called from a thread pool via stream_query (async).
         Yields text chunks or __SOURCES__ metadata lines.
         """
-        vector_db = self._get_vector_db()
         sources = []
         context = ""
         doc_id_str = str(document_id) if document_id is not None else None
 
-        if vector_db is not None:
-            filter_dict = {"document_id": doc_id_str} if doc_id_str else None
-            try:
-                # Only run embedding search if vector db has documents stored
-                if vector_db._collection.count() > 0:
-                    docs = vector_db.similarity_search(question, k=2, filter=filter_dict)
-                    if docs:
-                        context = "\n\n".join([f"Source ({doc.metadata.get('filename', 'Doc')}): {doc.page_content[:1000]}" for doc in docs])
-                        sources = [{"filename": doc.metadata.get("filename", "Unknown"), "document_id": doc.metadata.get("document_id")} for doc in docs]
-                        yield f"__SOURCES__:{json.dumps(sources)}\n"
-            except Exception as e:
-                print(f"Similarity search notice: {e}")
-
-        # Fallback to DB lookup if specific document selected but no vector context retrieved
-        if doc_id_str and not context:
-            try:
-                from app.db.database import SessionLocal
-                from app.models.models import Document as DocumentModel
-                db = SessionLocal()
+        # Only hit ChromaDB if user has a specific document selected
+        if doc_id_str:
+            vector_db = self._get_vector_db()
+            if vector_db is not None:
+                filter_dict = {"document_id": doc_id_str}
                 try:
-                    db_doc = db.query(DocumentModel).filter(DocumentModel.id == int(doc_id_str)).first()
-                    if db_doc and db_doc.extracted_text:
-                        context = f"Source ({db_doc.filename}): {db_doc.extracted_text[:5000]}"
-                        sources = [{"filename": db_doc.filename, "document_id": str(db_doc.id)}]
-                        yield f"__SOURCES__:{json.dumps(sources)}\n"
-                finally:
-                    db.close()
-            except Exception as ex:
-                print(f"DB fallback error: {ex}")
+                    if vector_db._collection.count() > 0:
+                        docs = vector_db.similarity_search(question, k=3, filter=filter_dict)
+                        if docs:
+                            context = "\n\n".join([f"Source ({doc.metadata.get('filename', 'Doc')}): {doc.page_content[:1000]}" for doc in docs])
+                            sources = [{"filename": doc.metadata.get("filename", "Unknown"), "document_id": doc.metadata.get("document_id")} for doc in docs]
+                            yield f"__SOURCES__:{json.dumps(sources)}\n"
+                except Exception as e:
+                    print(f"Similarity search notice: {e}")
+
+            # Fallback to DB text if vector search came back empty
+            if not context:
+                try:
+                    from app.db.database import SessionLocal
+                    from app.models.models import Document as DocumentModel
+                    db = SessionLocal()
+                    try:
+                        db_doc = db.query(DocumentModel).filter(DocumentModel.id == int(doc_id_str)).first()
+                        if db_doc and db_doc.extracted_text:
+                            context = f"Source ({db_doc.filename}): {db_doc.extracted_text[:5000]}"
+                            sources = [{"filename": db_doc.filename, "document_id": str(db_doc.id)}]
+                            yield f"__SOURCES__:{json.dumps(sources)}\n"
+                    finally:
+                        db.close()
+                except Exception as ex:
+                    print(f"DB fallback error: {ex}")
 
         prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
 Your task is to provide complete, highly thorough, articulate, and accurate research responses.
@@ -168,7 +171,9 @@ User Question: {question}
 Research Response:"""
 
         try:
-            for chunk in gemini_key_manager.stream_with_fallback(prompt, temperature=0.5, max_output_tokens=8192):
+            # max_output_tokens=4096 keeps first-token latency low on gemini-2.5-flash;
+            # the model still answers fully — 4096 tokens ≈ 3000 words which covers most responses.
+            for chunk in gemini_key_manager.stream_with_fallback(prompt, temperature=0.5, max_output_tokens=4096):
                 yield chunk
         except APIKeysExhaustedError:
             yield "\n\n[ERROR: 429 Rate Limit - All Gemini API keys are currently exhausted. Primary key is under a 60-second cooldown.]"

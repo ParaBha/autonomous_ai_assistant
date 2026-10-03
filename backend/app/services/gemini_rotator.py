@@ -84,12 +84,14 @@ class GeminiKeyManager:
         self,
         prompt: str,
         temperature: float = 0.5,
-        max_output_tokens: int = 8192,
+        max_output_tokens: int = 4096,
         model_name: Optional[str] = None
     ) -> str:
         """
         Invokes LLM with automatic Primary -> Secondary key failover on 429 errors.
         Retries up to MAX_RETRIES times on 503 UNAVAILABLE before giving up.
+        thinking_config budget_tokens=0 disables Gemini 2.5 Flash's extended reasoning
+        which otherwise adds 5-30s of silent delay before the first token.
         """
         active_key, role = self.get_active_key()
         target_model = model_name or settings.GEMINI_MODEL
@@ -102,6 +104,7 @@ class GeminiKeyManager:
                     config=types.GenerateContentConfig(
                         temperature=temperature,
                         max_output_tokens=max_output_tokens,
+                        thinking_config=types.ThinkingConfig(budget_tokens=0),
                     )
                 )
                 return response.text or ""
@@ -141,11 +144,13 @@ class GeminiKeyManager:
         self,
         prompt: str,
         temperature: float = 0.5,
-        max_output_tokens: int = 8192,
+        max_output_tokens: int = 4096,
         model_name: Optional[str] = None
     ) -> Generator[str, None, None]:
         """
         Streams LLM response chunk by chunk with automatic key failover and 503 retry logic.
+        thinking_config budget_tokens=0 disables Gemini 2.5 Flash's extended reasoning
+        so the first streamed token appears immediately instead of after a 5-30s think pause.
         """
         active_key, role = self.get_active_key()
         target_model = model_name or settings.GEMINI_MODEL
@@ -158,6 +163,7 @@ class GeminiKeyManager:
                     config=types.GenerateContentConfig(
                         temperature=temperature,
                         max_output_tokens=max_output_tokens,
+                        thinking_config=types.ThinkingConfig(budget_tokens=0),
                     )
                 )
                 for chunk in res_stream:
