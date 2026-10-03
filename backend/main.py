@@ -20,11 +20,19 @@ app = FastAPI(title="Autonomous AI Research Assistant")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        # Production Vercel frontends
         "https://autonomous-ai-assistant-blond.vercel.app",
+        "https://autonomous-ai-assistant.vercel.app",
+        # Vercel preview deployments (any branch)
+        "https://autonomous-ai-assistant-parabhas-projects.vercel.app",
+        "https://autonomous-ai-assistant-git-main-parabhas-projects.vercel.app",
+        # Render backend (for health checks / self-ping)
+        "https://autonomous-ai-assistant.onrender.com",
+        # Local development
         "http://localhost:3000",
         "http://localhost:5173",
         "http://127.0.0.1:3000",
-        "http://127.0.0.1:5173"
+        "http://127.0.0.1:5173",
     ],
     allow_credentials=True,
     allow_methods=["*"],
