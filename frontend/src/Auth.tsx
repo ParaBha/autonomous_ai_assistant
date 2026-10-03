@@ -354,6 +354,7 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                                             type="text"
                                             placeholder="Dr. Elena Carter"
                                             required
+                                            value={formData.name}
                                             className="w-full bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 pl-12 pr-4 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500/40 transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600"
                                             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                                         />
@@ -368,6 +369,7 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                                         <input
                                             type="text"
                                             placeholder="Researcher"
+                                            value={formData.profession}
                                             className="w-full bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 px-4 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600"
                                             onChange={(e) => setFormData({ ...formData, profession: e.target.value })}
                                         />
@@ -377,6 +379,7 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                                         <input
                                             type="text"
                                             placeholder="+91..."
+                                            value={formData.phone}
                                             className="w-full bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 px-4 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600"
                                             onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                                         />
@@ -391,6 +394,7 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                                         <input
                                             type="text"
                                             placeholder="MIT / Parul University"
+                                            value={formData.institution}
                                             className="w-full bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 px-4 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600"
                                             onChange={(e) => setFormData({ ...formData, institution: e.target.value })}
                                         />
@@ -400,6 +404,7 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                                         <input
                                             type="text"
                                             placeholder="AI & Data Science"
+                                            value={formData.field_of_study}
                                             className="w-full bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 px-4 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600"
                                             onChange={(e) => setFormData({ ...formData, field_of_study: e.target.value })}
                                         />
@@ -415,6 +420,7 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                                         type="email"
                                         placeholder="researcher@mit.edu"
                                         required
+                                        value={formData.email}
                                         className="w-full bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 pl-12 pr-4 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500/40 transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600"
                                         onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                                     />
@@ -429,6 +435,7 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                                         type="password"
                                         placeholder="••••••••"
                                         required
+                                        value={formData.password}
                                         className="w-full bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-2xl py-3.5 pl-12 pr-4 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-500/40 transition-all placeholder:text-slate-400 dark:placeholder:text-slate-600"
                                         onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                                     />
@@ -497,7 +504,10 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                         <p className="text-center text-slate-600 dark:text-slate-400 mt-10 text-sm font-medium">
                             {isLogin ? "New to ThinkForge?" : "Ready to start forging?"}
                             <button
-                                onClick={() => setIsLogin(!isLogin)}
+                                onClick={() => {
+                                    setIsLogin(!isLogin);
+                                    setError('');
+                                }}
                                 className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-500 dark:hover:text-indigo-300 font-bold ml-2 underline underline-offset-8 decoration-indigo-500/30 hover:decoration-indigo-500 transition-all"
                             >
                                 {isLogin ? 'Create Workspace' : 'Sign in'}

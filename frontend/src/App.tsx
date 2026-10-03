@@ -935,6 +935,9 @@ const App = () => {
         return <Auth onLogin={(userData: any) => {
             setUser(userData);
             setIsAuthenticated(true);
+            if (userData.access_token) {
+                axios.defaults.headers.common['Authorization'] = `Bearer ${userData.access_token}`;
+            }
         }} theme={theme} />;
     }
 

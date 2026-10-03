@@ -130,22 +130,23 @@ async def signup(request: SignupRequest, db: Session = Depends(get_db)):
     Register a new user. Collects full profile at sign-up time.
     Returns the user object plus a JWT access token.
     """
-    existing_user = db.query(User).filter(User.email == request.email).first()
+    clean_email = request.email.strip().lower()
+    existing_user = db.query(User).filter(User.email == clean_email).first()
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={request.email}"
+    avatar_url = f"https://api.dicebear.com/7.x/avataaars/svg?seed={clean_email}"
     hashed_pw = await hash_password(request.password)
 
     new_user = User(
-        email=request.email,
+        email=clean_email,
         hashed_password=hashed_pw,
-        full_name=request.name,
-        profession=request.profession or "",
-        phone=request.phone or "",
+        full_name=request.name.strip() if request.name else "",
+        profession=request.profession.strip() if request.profession else "",
+        phone=request.phone.strip() if request.phone else "",
         avatar_url=avatar_url,
-        institution=request.institution or "",
-        field_of_study=request.field_of_study or "",
+        institution=request.institution.strip() if request.institution else "",
+        field_of_study=request.field_of_study.strip() if request.field_of_study else "",
         research_interests=[]
     )
 
@@ -162,7 +163,8 @@ async def signin(request: SigninRequest, db: Session = Depends(get_db)):
     """
     Authenticate user. Returns profile fetched by user ID plus a JWT access token.
     """
-    user = db.query(User).filter(User.email == request.email).first()
+    clean_email = request.email.strip().lower()
+    user = db.query(User).filter(User.email == clean_email).first()
     if not user or not await verify_password(request.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
