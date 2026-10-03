@@ -801,42 +801,60 @@ const App = () => {
             const decoder = new TextDecoder();
             let accumulatedContent = '';
             let sources: any[] = [];
+            let streamBuffer = '';
 
-            let sourcesProcessed = false;
-            
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
                 
-                const chunk = decoder.decode(value, { stream: true });
+                streamBuffer += decoder.decode(value, { stream: true });
                 
-                if (!sourcesProcessed && chunk.includes('__SOURCES__:')) {
-                    const parts = chunk.split('\n');
-                    for (const part of parts) {
-                        if (part.startsWith('__SOURCES__:')) {
-                            try {
-                                sources = JSON.parse(part.replace('__SOURCES__:', ''));
-                                sourcesProcessed = true;
-                            } catch (e) { console.error('Failed to parse sources:', e); }
-                        } else if (part.trim() || sourcesProcessed) {
-                            // Only append if it's not empty OR if sources are already done
-                            accumulatedContent += part + (parts.length > 1 && part !== parts[parts.length-1] ? '\n' : '');
-                        }
+                // Process line-by-line while looking for __SOURCES__ metadata header
+                const lines = streamBuffer.split('\n');
+                // Keep incomplete trailing fragment in buffer until next chunk
+                streamBuffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('__SOURCES__:')) {
+                        try {
+                            sources = JSON.parse(line.replace('__SOURCES__:', ''));
+                        } catch (e) { console.error('Failed to parse sources:', e); }
+                    } else {
+                        accumulatedContent += line + '\n';
                     }
-                } else {
-                    accumulatedContent += chunk;
                 }
 
-                // Update the last message
+                // Update UI state with current decoded content
+                const currentContent = accumulatedContent + streamBuffer;
                 setMessages(prev => {
                     const last = [...prev];
                     const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                     if (idx !== -1) {
-                        last[idx] = { ...last[idx], content: accumulatedContent, sources: sources };
+                        last[idx] = { ...last[idx], content: currentContent, sources: sources };
                     }
                     return last;
                 });
             }
+
+            // Flush leftover buffer text
+            if (streamBuffer) {
+                if (streamBuffer.startsWith('__SOURCES__:')) {
+                    try {
+                        sources = JSON.parse(streamBuffer.replace('__SOURCES__:', ''));
+                    } catch (e) { console.error('Failed to parse sources:', e); }
+                } else {
+                    accumulatedContent += streamBuffer;
+                }
+            }
+
+            setMessages(prev => {
+                const last = [...prev];
+                const idx = last.findIndex(m => (m as any).id === assistantMessageId);
+                if (idx !== -1) {
+                    last[idx] = { ...last[idx], content: accumulatedContent, sources: sources };
+                }
+                return last;
+            });
             
             // Speak if enabled
             if (voiceEnabled) speak(accumulatedContent);

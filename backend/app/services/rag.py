@@ -87,17 +87,23 @@ class RAGService:
                 print(f"RAG search error: {e}")
 
         prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
-Answer the user's research question clearly, accurately, and directly based on the provided document context.
+Your task is to provide complete, highly thorough, articulate, and accurate research responses.
+
+RESPONSE GUIDELINES:
+- Provide comprehensive, fully detailed answers without truncating or stopping mid-thought.
+- Format your response cleanly using standard GitHub-flavored Markdown (headers, bullet points, bold key terms).
+- Do NOT repeat headers, bullet prefixes, or text fragments sequentially (avoid loop repetition).
+- Be precise, informative, and complete.
 
 Context from Uploaded Research Documents:
-{context if context else 'No document context. Provide a clear, insightful general research answer.'}
+{context if context else 'No specific document context attached. Provide a clear, detailed general research answer.'}
 
 User Question: {question}
 
 Research Response:"""
 
         try:
-            answer = gemini_key_manager.invoke_with_fallback(prompt, temperature=0.1, max_output_tokens=1024)
+            answer = gemini_key_manager.invoke_with_fallback(prompt, temperature=0.5, max_output_tokens=8192)
             return {"answer": answer, "sources": sources}
         except APIKeysExhaustedError:
             raise
@@ -146,17 +152,23 @@ Research Response:"""
                 print(f"DB fallback error: {ex}")
 
         prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
-Answer the user's research question clearly, accurately, and directly based on the provided document context.
+Your task is to provide complete, highly thorough, articulate, and accurate research responses.
+
+RESPONSE GUIDELINES:
+- Provide comprehensive, fully detailed answers without truncating or stopping mid-thought.
+- Format your response cleanly using standard GitHub-flavored Markdown (headers, bullet points, bold key terms).
+- Do NOT repeat headers, bullet prefixes, or text fragments sequentially (avoid loop repetition).
+- Be precise, informative, and complete.
 
 Context from Uploaded Research Documents:
-{context if context else 'No specific document attached. Provide a clear, insightful general research answer.'}
+{context if context else 'No specific document context attached. Provide a clear, detailed general research answer.'}
 
 User Question: {question}
 
 Research Response:"""
 
         try:
-            for chunk in gemini_key_manager.stream_with_fallback(prompt, temperature=0.1, max_output_tokens=1024):
+            for chunk in gemini_key_manager.stream_with_fallback(prompt, temperature=0.5, max_output_tokens=8192):
                 yield chunk
         except APIKeysExhaustedError:
             yield "\n\n[ERROR: 429 Rate Limit - All Gemini API keys are currently exhausted. Primary key is under a 60-second cooldown.]"

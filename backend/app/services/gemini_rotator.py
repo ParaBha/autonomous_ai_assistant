@@ -83,8 +83,8 @@ class GeminiKeyManager:
     def invoke_with_fallback(
         self,
         prompt: str,
-        temperature: float = 0.1,
-        max_output_tokens: int = 1024,
+        temperature: float = 0.5,
+        max_output_tokens: int = 8192,
         model_name: Optional[str] = None
     ) -> str:
         """
@@ -140,8 +140,8 @@ class GeminiKeyManager:
     def stream_with_fallback(
         self,
         prompt: str,
-        temperature: float = 0.1,
-        max_output_tokens: int = 1024,
+        temperature: float = 0.5,
+        max_output_tokens: int = 8192,
         model_name: Optional[str] = None
     ) -> Generator[str, None, None]:
         """
