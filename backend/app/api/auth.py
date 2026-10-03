@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
-from passlib.context import CryptContext
+import bcrypt as _bcrypt
 from app.db.database import get_db
 from app.models.models import User, Document as DocumentModel, ResearchProject as ProjectModel, ChatMessage
 from app.core.config import settings
@@ -9,12 +9,8 @@ from datetime import datetime, timedelta
 from typing import Optional, List
 from jose import JWTError, jwt
 import asyncio
-import re
 
 router = APIRouter()
-
-# Password hashing — rounds=10 keeps latency ~110ms (default 12 = ~430ms)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=10)
 
 # ── JWT Helpers ────────────────────────────────────────────────────────────────
 
@@ -96,16 +92,29 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 # ── Password Utilities ─────────────────────────────────────────────────────────
+# Using bcrypt directly to avoid passlib<->bcrypt>=4.x version detection bug
+# that caused (trapped) error reading bcrypt version and potential silent hangs.
+
+def _do_hash(password: str) -> str:
+    """Synchronous bcrypt hash (rounds=10)."""
+    return _bcrypt.hashpw(password.encode('utf-8'), _bcrypt.gensalt(rounds=10)).decode('utf-8')
+
+def _do_verify(plain_password: str, hashed_password: str) -> bool:
+    """Synchronous bcrypt verify."""
+    try:
+        return _bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+    except Exception:
+        return False
 
 async def hash_password(password: str) -> str:
     """Hash a password using bcrypt in a thread pool so the async event loop is never blocked."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, pwd_context.hash, password)
+    return await loop.run_in_executor(None, _do_hash, password)
 
 async def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash in a thread pool so the async event loop is never blocked."""
     loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, pwd_context.verify, plain_password, hashed_password)
+    return await loop.run_in_executor(None, _do_verify, plain_password, hashed_password)
 
 def _user_to_response(user: User, token: str = "") -> UserResponse:
     """Convert a User ORM object to a UserResponse dict."""

@@ -102,13 +102,16 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
         setError('');
         setIsLoading(true);
 
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+
         try {
             const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
             const endpoint = isLogin ? `${API_URL}/api/v1/auth/signin` : `${API_URL}/api/v1/auth/signup`;
             const payload = isLogin
-                ? { email: formData.email, password: formData.password }
+                ? { email: formData.email.trim().toLowerCase(), password: formData.password }
                 : {
-                    email: formData.email,
+                    email: formData.email.trim().toLowerCase(),
                     password: formData.password,
                     name: formData.name,
                     profession: formData.profession,
@@ -117,28 +120,33 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
                     field_of_study: formData.field_of_study
                 };
 
+            console.log('[Auth] Submitting to:', endpoint);
+
             const response = await fetch(endpoint, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
+                signal: controller.signal,
             });
 
+            clearTimeout(timeoutId);
+            console.log('[Auth] Response status:', response.status);
+
             if (!response.ok) {
-                let errorMessage = 'Authentication failed';
+                let errorMessage = `Error ${response.status}: Authentication failed`;
                 const contentType = response.headers.get('content-type');
                 if (contentType && contentType.includes('application/json')) {
                     const errorData = await response.json();
                     errorMessage = errorData.detail || errorMessage;
                 } else {
                     const errorText = await response.text();
-                    errorMessage = errorText || `Error ${response.status}: Internal Server Error`;
+                    errorMessage = errorText || errorMessage;
                 }
                 throw new Error(errorMessage);
             }
 
             const userData = await response.json();
+            console.log('[Auth] Login success, user:', userData.email);
 
             // Store user data in localStorage for session persistence
             localStorage.setItem('user', JSON.stringify(userData));
@@ -149,7 +157,13 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
 
             onLogin(userData);
         } catch (err: any) {
-            setError(err.message || 'An error occurred. Please try again.');
+            clearTimeout(timeoutId);
+            if (err.name === 'AbortError') {
+                setError('Request timed out. The server took too long to respond. Please try again.');
+            } else {
+                setError(err.message || 'An error occurred. Please try again.');
+            }
+            console.error('[Auth] Auth error:', err);
         } finally {
             setIsLoading(false);
         }
