@@ -142,6 +142,10 @@ const Auth = ({ onLogin, theme }: { onLogin: (user: any) => void, theme: string 
 
             // Store user data in localStorage for session persistence
             localStorage.setItem('user', JSON.stringify(userData));
+            // Also store access_token separately — App.tsx reads this key to keep session alive on reload
+            if (userData.access_token) {
+                localStorage.setItem('access_token', userData.access_token);
+            }
 
             onLogin(userData);
         } catch (err: any) {
