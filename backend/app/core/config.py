@@ -31,7 +31,22 @@ class Settings(BaseSettings):
         return self.GEMINI_PRIMARY_KEY.strip()
 
     def get_secondary_key(self) -> str:
-        return self.GEMINI_SECONDARY_KEY.strip()
+        """Return GEMINI_SECONDARY_KEY, or fall back to first key from GEMINI_API_KEYS pool."""
+        if self.GEMINI_SECONDARY_KEY.strip():
+            return self.GEMINI_SECONDARY_KEY.strip()
+        # Fall back to GEMINI_API_KEYS (comma-separated) — pick the first one
+        # that is different from the primary key
+        if self.GEMINI_API_KEYS_RAW.strip():
+            primary = self.get_primary_key()
+            for k in self.GEMINI_API_KEYS_RAW.split(","):
+                k = k.strip()
+                if k and k != primary:
+                    return k
+            # If all keys in pool are same as primary, still return the first one
+            first = self.GEMINI_API_KEYS_RAW.split(",")[0].strip()
+            if first:
+                return first
+        return ""
     
     class Config:
         case_sensitive = True
