@@ -801,57 +801,63 @@ const App = () => {
             const decoder = new TextDecoder();
             let accumulatedContent = '';
             let sources: any[] = [];
-            let streamBuffer = '';
+            let sourcesBuffer = '';   // accumulate __SOURCES__ line across chunks
 
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
-                
-                streamBuffer += decoder.decode(value, { stream: true });
-                
-                // Process line-by-line while looking for __SOURCES__ metadata header
-                const lines = streamBuffer.split('\n');
-                // Keep incomplete trailing fragment in buffer until next chunk
-                streamBuffer = lines.pop() || '';
 
-                for (const line of lines) {
-                    if (line.startsWith('__SOURCES__:')) {
-                        try {
-                            sources = JSON.parse(line.replace('__SOURCES__:', ''));
-                        } catch (e) { console.error('Failed to parse sources:', e); }
+                const raw = decoder.decode(value, { stream: true });
+
+                // Check for __SOURCES__ metadata — may span multiple chunks
+                sourcesBuffer += raw;
+                const srcIdx = sourcesBuffer.indexOf('__SOURCES__:');
+                if (srcIdx !== -1) {
+                    // Extract everything before the sources line as content
+                    const beforeSrc = sourcesBuffer.slice(0, srcIdx);
+                    const afterSrcStart = sourcesBuffer.slice(srcIdx + '__SOURCES__:'.length);
+                    const newlineIdx = afterSrcStart.indexOf('\n');
+                    if (newlineIdx !== -1) {
+                        // Full sources line received
+                        const srcJson = afterSrcStart.slice(0, newlineIdx);
+                        try { sources = JSON.parse(srcJson); } catch {}
+                        // Remainder after sources line goes back into processing
+                        const remainder = afterSrcStart.slice(newlineIdx + 1);
+                        accumulatedContent += beforeSrc + remainder;
+                        sourcesBuffer = '';
                     } else {
-                        accumulatedContent += line + '\n';
+                        // Sources line not complete yet — keep buffering
+                        accumulatedContent += beforeSrc;
+                        sourcesBuffer = '__SOURCES__:' + afterSrcStart;
                     }
+                } else if (!sourcesBuffer.includes('__SOURCES__')) {
+                    // No sources header in buffer — flush everything immediately
+                    accumulatedContent += sourcesBuffer;
+                    sourcesBuffer = '';
                 }
 
-                // Update UI state with current decoded content
-                const currentContent = accumulatedContent + streamBuffer;
+                // Update UI on every chunk — no newline wait
+                const displayContent = accumulatedContent;
                 setMessages(prev => {
                     const last = [...prev];
                     const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                     if (idx !== -1) {
-                        last[idx] = { ...last[idx], content: currentContent, sources: sources };
+                        last[idx] = { ...last[idx], content: displayContent, sources };
                     }
                     return last;
                 });
             }
 
-            // Flush leftover buffer text
-            if (streamBuffer) {
-                if (streamBuffer.startsWith('__SOURCES__:')) {
-                    try {
-                        sources = JSON.parse(streamBuffer.replace('__SOURCES__:', ''));
-                    } catch (e) { console.error('Failed to parse sources:', e); }
-                } else {
-                    accumulatedContent += streamBuffer;
-                }
+            // Final flush of any remaining sourcesBuffer
+            if (sourcesBuffer && !sourcesBuffer.startsWith('__SOURCES__:')) {
+                accumulatedContent += sourcesBuffer;
             }
 
             setMessages(prev => {
                 const last = [...prev];
                 const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                 if (idx !== -1) {
-                    last[idx] = { ...last[idx], content: accumulatedContent, sources: sources };
+                    last[idx] = { ...last[idx], content: accumulatedContent, sources };
                 }
                 return last;
             });

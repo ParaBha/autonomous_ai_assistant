@@ -8,6 +8,24 @@ from app.core.config import settings
 MAX_RETRIES = 3
 RETRY_DELAY = 2  # seconds
 
+# ── Detect ThinkingConfig support once at startup ──────────────────────────────
+# ThinkingConfig.budget_tokens was added in google-genai 0.8.x.
+# We probe it once here so we never double-call the API at runtime.
+def _build_config(temperature: float, max_output_tokens: int) -> types.GenerateContentConfig:
+    """Return a GenerateContentConfig, with thinking disabled if the SDK supports it."""
+    try:
+        return types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            thinking_config=types.ThinkingConfig(budget_tokens=0),
+        )
+    except Exception:
+        # SDK too old to support budget_tokens — use plain config
+        return types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        )
+
 class APIKeysExhaustedError(Exception):
     """Raised when all configured Gemini API keys are exhausted due to rate limits (429 / ResourceExhausted)."""
     pass
@@ -90,37 +108,19 @@ class GeminiKeyManager:
         """
         Invokes LLM with automatic Primary -> Secondary key failover on 429 errors.
         Retries up to MAX_RETRIES times on 503 UNAVAILABLE before giving up.
-        thinking_config budget_tokens=0 disables Gemini 2.5 Flash's extended reasoning
-        which otherwise adds 5-30s of silent delay before the first token.
+        Uses _build_config() which disables Gemini thinking if SDK supports it.
         """
         active_key, role = self.get_active_key()
         target_model = model_name or settings.GEMINI_MODEL
+        config = _build_config(temperature, max_output_tokens)
         for attempt in range(MAX_RETRIES):
             try:
                 client = self._get_cached_client(active_key)
-                try:
-                    response = client.models.generate_content(
-                        model=target_model,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            temperature=temperature,
-                            max_output_tokens=max_output_tokens,
-                            thinking_config=types.ThinkingConfig(budget_tokens=0),
-                        )
-                    )
-                except Exception as te:
-                    if "budget_tokens" in str(te) or "extra_forbidden" in str(te) or "ThinkingConfig" in str(te):
-                        # Older SDK version — retry without thinking_config
-                        response = client.models.generate_content(
-                            model=target_model,
-                            contents=prompt,
-                            config=types.GenerateContentConfig(
-                                temperature=temperature,
-                                max_output_tokens=max_output_tokens,
-                            )
-                        )
-                    else:
-                        raise te
+                response = client.models.generate_content(
+                    model=target_model,
+                    contents=prompt,
+                    config=config,
+                )
                 return response.text or ""
             except Exception as e:
                 if self.is_unavailable_error(e) and attempt < MAX_RETRIES - 1:
@@ -137,10 +137,7 @@ class GeminiKeyManager:
                                 response = client_sec.models.generate_content(
                                     model=target_model,
                                     contents=prompt,
-                                    config=types.GenerateContentConfig(
-                                        temperature=temperature,
-                                        max_output_tokens=max_output_tokens,
-                                    )
+                                    config=config,
                                 )
                                 return response.text or ""
                             except Exception as sec_e:
@@ -163,37 +160,20 @@ class GeminiKeyManager:
     ) -> Generator[str, None, None]:
         """
         Streams LLM response chunk by chunk with automatic key failover and 503 retry logic.
-        thinking_config budget_tokens=0 disables Gemini 2.5 Flash's extended reasoning
-        so the first streamed token appears immediately instead of after a 5-30s think pause.
+        Uses _build_config() which disables Gemini thinking if SDK supports it,
+        so the first streamed token appears immediately.
         """
         active_key, role = self.get_active_key()
         target_model = model_name or settings.GEMINI_MODEL
+        config = _build_config(temperature, max_output_tokens)
         for attempt in range(MAX_RETRIES):
             try:
                 client = self._get_cached_client(active_key)
-                try:
-                    res_stream = client.models.generate_content_stream(
-                        model=target_model,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            temperature=temperature,
-                            max_output_tokens=max_output_tokens,
-                            thinking_config=types.ThinkingConfig(budget_tokens=0),
-                        )
-                    )
-                except Exception as te:
-                    if "budget_tokens" in str(te) or "extra_forbidden" in str(te) or "ThinkingConfig" in str(te):
-                        # Older SDK version — fallback without thinking_config
-                        res_stream = client.models.generate_content_stream(
-                            model=target_model,
-                            contents=prompt,
-                            config=types.GenerateContentConfig(
-                                temperature=temperature,
-                                max_output_tokens=max_output_tokens,
-                            )
-                        )
-                    else:
-                        raise te
+                res_stream = client.models.generate_content_stream(
+                    model=target_model,
+                    contents=prompt,
+                    config=config,
+                )
                 for chunk in res_stream:
                     if chunk.text:
                         yield chunk.text
@@ -213,10 +193,7 @@ class GeminiKeyManager:
                                 res_stream = client_sec.models.generate_content_stream(
                                     model=target_model,
                                     contents=prompt,
-                                    config=types.GenerateContentConfig(
-                                        temperature=temperature,
-                                        max_output_tokens=max_output_tokens,
-                                    )
+                                    config=config,
                                 )
                                 for chunk in res_stream:
                                     if chunk.text:
@@ -253,4 +230,3 @@ class GeminiKeyManager:
             }
 
 gemini_key_manager = GeminiKeyManager()
-
