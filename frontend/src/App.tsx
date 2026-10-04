@@ -864,13 +864,63 @@ const App = () => {
             
             // Speak if enabled
             if (voiceEnabled) speak(accumulatedContent);
+
+            // ── Auto-retry on 429 in streamed content ──────────────────────────
+            if (accumulatedContent.includes('[ERROR: 429') || accumulatedContent.includes('Rate Limit')) {
+                const retryCount = (window as any).__retryCount || 0;
+                if (retryCount < 2) {
+                    (window as any).__retryCount = retryCount + 1;
+                    // Show countdown in the message
+                    let secondsLeft = 30;
+                    const countdownInterval = setInterval(() => {
+                        secondsLeft--;
+                        setMessages(prev => {
+                            const last = [...prev];
+                            const idx = last.findIndex(m => (m as any).id === assistantMessageId);
+                            if (idx !== -1) {
+                                last[idx] = { ...last[idx], content: `⏳ API rate limit reached. Auto-retrying in **${secondsLeft}s**...\n\n_Both API keys are cooling down. This is temporary._` };
+                            }
+                            return last;
+                        });
+                        if (secondsLeft <= 0) {
+                            clearInterval(countdownInterval);
+                        }
+                    }, 1000);
+                    // Wait 30s then retry
+                    await new Promise(resolve => setTimeout(resolve, 30000));
+                    clearInterval(countdownInterval);
+                    // Remove the error message and re-send
+                    setMessages(prev => prev.filter(m => (m as any).id !== assistantMessageId));
+                    setIsLoading(false);
+                    // Re-trigger with the same message
+                    const retryEvent = { preventDefault: () => {} } as React.FormEvent;
+                    setInput(textToSend);
+                    setTimeout(() => {
+                        const form = document.querySelector('form');
+                        if (form) form.dispatchEvent(new Event('submit', { bubbles: true }));
+                    }, 100);
+                    return;
+                } else {
+                    (window as any).__retryCount = 0;
+                    setMessages(prev => {
+                        const last = [...prev];
+                        const idx = last.findIndex(m => (m as any).id === assistantMessageId);
+                        if (idx !== -1) {
+                            last[idx] = { ...last[idx], content: '⚠️ API rate limit reached after retries. Please wait a minute and try again.' };
+                        }
+                        return last;
+                    });
+                }
+            } else {
+                (window as any).__retryCount = 0; // Reset on success
+            }
         } catch (error) {
             console.error('Chat failed:', error);
             setMessages(prev => {
                 const last = [...prev];
                 const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                 if (idx !== -1) {
-                    last[idx] = { ...last[idx], content: 'Sorry, I encountered an error during streaming.' };
+                    last[idx] = { ...last[idx], content: 'Sorry, I encountered an error. Please try again.' };
                 }
                 return last;
             });

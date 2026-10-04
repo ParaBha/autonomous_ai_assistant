@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_API_KEYS_RAW: str = os.getenv("GEMINI_API_KEYS", "")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
-    GEMINI_COOLDOWN_SECONDS: int = 60
+    GEMINI_COOLDOWN_SECONDS: int = 30
     
     # Upload Settings
     UPLOAD_DIR: str = "uploads"
