@@ -184,6 +184,8 @@ Research Response:"""
         """
         Async generator — runs the blocking sync stream in a thread pool
         and uses the running event loop to put chunks into an asyncio.Queue safely.
+        Sends keepalive whitespace every 2s to prevent Render's proxy from closing
+        the connection while waiting for the first Gemini token.
         """
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
@@ -201,10 +203,17 @@ Research Response:"""
         loop.run_in_executor(None, _run_sync)
 
         while True:
-            item = await queue.get()
-            if item is _DONE:
-                break
-            yield item
+            try:
+                # Wait up to 2s for a chunk before sending a keepalive space
+                item = await asyncio.wait_for(queue.get(), timeout=2.0)
+                if item is _DONE:
+                    break
+                yield item
+            except asyncio.TimeoutError:
+                # No chunk yet — send a single space to keep the TCP connection alive
+                # The frontend strips leading/trailing whitespace so this is invisible
+                yield " "
+
 
 
 rag_service = RAGService()

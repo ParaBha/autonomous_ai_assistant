@@ -779,6 +779,20 @@ const App = () => {
             sources: [] 
         }]);
 
+        // Abort controller — 90s total timeout, shows warming message after 5s
+        const abortController = new AbortController();
+        const hardTimeout = setTimeout(() => abortController.abort(), 90000);
+        const warmingTimeout = setTimeout(() => {
+            setMessages(prev => {
+                const last = [...prev];
+                const idx = last.findIndex(m => (m as any).id === assistantMessageId);
+                if (idx !== -1 && !last[idx].content) {
+                    last[idx] = { ...last[idx], content: '⏳ Waking server... this takes ~30s on first request. Please wait.' };
+                }
+                return last;
+            });
+        }, 5000);
+
         try {
             const response = await fetch(`${API_URL}/api/v1/chat/stream_chat`, {
                 method: 'POST',
@@ -793,8 +807,12 @@ const App = () => {
                         .slice(-3)
                         .map(m => [m.role, m.content]),
                     document_id: currentDocId
-                })
+                }),
+                signal: abortController.signal,
             });
+
+            clearTimeout(warmingTimeout); // Server responded — cancel warming message
+            clearTimeout(hardTimeout);
 
             if (!response.body) throw new Error('No response body');
             const reader = response.body.getReader();
