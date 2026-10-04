@@ -1,12 +1,14 @@
 fastapi
 uvicorn
 pydantic[email]
+pydantic-settings
 sqlalchemy
 psycopg2-binary
 python-multipart
 python-jose[cryptography]
 passlib==1.7.4
 bcrypt==4.3.0
+google-genai>=0.8.0
 google-generativeai
 langchain-google-genai
 langchain-text-splitters

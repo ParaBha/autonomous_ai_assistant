@@ -98,15 +98,29 @@ class GeminiKeyManager:
         for attempt in range(MAX_RETRIES):
             try:
                 client = self._get_cached_client(active_key)
-                response = client.models.generate_content(
-                    model=target_model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=temperature,
-                        max_output_tokens=max_output_tokens,
-                        thinking_config=types.ThinkingConfig(budget_tokens=0),
+                try:
+                    response = client.models.generate_content(
+                        model=target_model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=temperature,
+                            max_output_tokens=max_output_tokens,
+                            thinking_config=types.ThinkingConfig(budget_tokens=0),
+                        )
                     )
-                )
+                except Exception as te:
+                    if "budget_tokens" in str(te) or "extra_forbidden" in str(te) or "ThinkingConfig" in str(te):
+                        # Older SDK version — retry without thinking_config
+                        response = client.models.generate_content(
+                            model=target_model,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                temperature=temperature,
+                                max_output_tokens=max_output_tokens,
+                            )
+                        )
+                    else:
+                        raise te
                 return response.text or ""
             except Exception as e:
                 if self.is_unavailable_error(e) and attempt < MAX_RETRIES - 1:
@@ -157,15 +171,29 @@ class GeminiKeyManager:
         for attempt in range(MAX_RETRIES):
             try:
                 client = self._get_cached_client(active_key)
-                res_stream = client.models.generate_content_stream(
-                    model=target_model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=temperature,
-                        max_output_tokens=max_output_tokens,
-                        thinking_config=types.ThinkingConfig(budget_tokens=0),
+                try:
+                    res_stream = client.models.generate_content_stream(
+                        model=target_model,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=temperature,
+                            max_output_tokens=max_output_tokens,
+                            thinking_config=types.ThinkingConfig(budget_tokens=0),
+                        )
                     )
-                )
+                except Exception as te:
+                    if "budget_tokens" in str(te) or "extra_forbidden" in str(te) or "ThinkingConfig" in str(te):
+                        # Older SDK version — fallback without thinking_config
+                        res_stream = client.models.generate_content_stream(
+                            model=target_model,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                temperature=temperature,
+                                max_output_tokens=max_output_tokens,
+                            )
+                        )
+                    else:
+                        raise te
                 for chunk in res_stream:
                     if chunk.text:
                         yield chunk.text
