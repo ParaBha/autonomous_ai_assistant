@@ -20,19 +20,11 @@ MODEL_FALLBACK_CHAIN = [
 # ThinkingConfig.budget_tokens was added in google-genai 0.8.x.
 # We probe it once here so we never double-call the API at runtime.
 def _build_config(temperature: float, max_output_tokens: int) -> types.GenerateContentConfig:
-    """Return a GenerateContentConfig, with thinking disabled if the SDK supports it."""
-    try:
-        return types.GenerateContentConfig(
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            thinking_config=types.ThinkingConfig(budget_tokens=0),
-        )
-    except Exception:
-        # SDK too old to support budget_tokens — use plain config
-        return types.GenerateContentConfig(
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-        )
+    """Return a standard fast GenerateContentConfig."""
+    return types.GenerateContentConfig(
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+    )
 
 class APIKeysExhaustedError(Exception):
     """Raised when all configured Gemini API keys are exhausted due to rate limits (429 / ResourceExhausted)."""
