@@ -941,16 +941,25 @@ const App = () => {
             }
         } catch (error: any) {
             console.error('Chat failed:', error);
-            const detail = error?.message || 'Connection error. Please try again.';
+            const isAbort = error?.name === 'AbortError' || (error?.message && error.message.toLowerCase().includes('aborted'));
             setMessages(prev => {
                 const last = [...prev];
                 const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                 if (idx !== -1) {
+                    // Preserve response if text was already received before abort
+                    const currentContent = last[idx].content || '';
+                    if (currentContent.trim().length > 0 && !currentContent.startsWith('⏳') && !currentContent.startsWith('⚠️')) {
+                        return last;
+                    }
+                    const detail = isAbort 
+                        ? 'Request timed out or was cancelled. Please try again.'
+                        : (error?.message || 'Connection error. Please try again.');
                     last[idx] = { ...last[idx], content: `⚠️ ${detail}` };
                 }
                 return last;
             });
         } finally {
+            clearTimeout(hardTimeout);
             setIsLoading(false);
         }
     };
