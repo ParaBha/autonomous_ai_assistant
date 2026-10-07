@@ -15,7 +15,7 @@ from app.db.database import engine, Base
 
 Base.metadata.create_all(bind=engine)
 
-# Deployment Version: 1.0.2 (Error diagnostics & Gemini 3.8-flash sync)
+# Deployment Version: 1.0.3 (Abort handling & Gemini 2.5-flash sync)
 app = FastAPI(title="Autonomous AI Research Assistant")
 
 app.add_middleware(
