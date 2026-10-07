@@ -779,14 +779,16 @@ const App = () => {
             sources: [] 
         }]);
 
-        // Abort controller — 90s total timeout, shows warming message after 5s
+        // Abort controller — 90s total timeout, shows warming message after 5s if server takes long to respond
         const abortController = new AbortController();
         const hardTimeout = setTimeout(() => abortController.abort(), 90000);
+        let serverWarmingFired = false;
         const warmingTimeout = setTimeout(() => {
+            serverWarmingFired = true;
             setMessages(prev => {
                 const last = [...prev];
                 const idx = last.findIndex(m => (m as any).id === assistantMessageId);
-                if (idx !== -1 && !last[idx].content) {
+                if (idx !== -1 && (!last[idx].content || last[idx].content.trim() === '')) {
                     last[idx] = { ...last[idx], content: '⏳ Waking server... this takes ~30s on first request. Please wait.' };
                 }
                 return last;
@@ -811,7 +813,7 @@ const App = () => {
                 signal: abortController.signal,
             });
 
-            clearTimeout(warmingTimeout); // Server responded — cancel warming message
+            clearTimeout(warmingTimeout); // Server responded — cancel warming timer
             clearTimeout(hardTimeout);
 
             if (!response.body) throw new Error('No response body');
@@ -854,13 +856,18 @@ const App = () => {
                     sourcesBuffer = '';
                 }
 
-                // Update UI on every chunk — no newline wait
-                const displayContent = accumulatedContent;
+                // Update UI on every chunk — ignore leading whitespace keepalives until real text arrives
+                const hasRealText = accumulatedContent.trim().length > 0;
+                const displayContent = hasRealText ? accumulatedContent.replace(/^\s+/, '') : '';
+
                 setMessages(prev => {
                     const last = [...prev];
                     const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                     if (idx !== -1) {
-                        last[idx] = { ...last[idx], content: displayContent, sources };
+                        // Only overwrite warming message when real content arrives or keep empty placeholder
+                        if (hasRealText || !serverWarmingFired) {
+                            last[idx] = { ...last[idx], content: displayContent, sources };
+                        }
                     }
                     return last;
                 });
@@ -871,17 +878,19 @@ const App = () => {
                 accumulatedContent += sourcesBuffer;
             }
 
+            const finalDisplayContent = accumulatedContent.replace(/^\s+/, '');
+
             setMessages(prev => {
                 const last = [...prev];
                 const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                 if (idx !== -1) {
-                    last[idx] = { ...last[idx], content: accumulatedContent, sources };
+                    last[idx] = { ...last[idx], content: finalDisplayContent, sources };
                 }
                 return last;
             });
             
             // Speak if enabled
-            if (voiceEnabled) speak(accumulatedContent);
+            if (voiceEnabled) speak(finalDisplayContent);
 
             // ── Auto-retry on 429 in streamed content ──────────────────────────
             if (accumulatedContent.includes('[ERROR: 429') || accumulatedContent.includes('Rate Limit')) {
