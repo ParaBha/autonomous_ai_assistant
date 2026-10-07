@@ -779,21 +779,9 @@ const App = () => {
             sources: [] 
         }]);
 
-        // Abort controller — 90s total timeout, shows warming message after 5s if server takes long to respond
+        // Abort controller — 90s total timeout
         const abortController = new AbortController();
         const hardTimeout = setTimeout(() => abortController.abort(), 90000);
-        let serverWarmingFired = false;
-        const warmingTimeout = setTimeout(() => {
-            serverWarmingFired = true;
-            setMessages(prev => {
-                const last = [...prev];
-                const idx = last.findIndex(m => (m as any).id === assistantMessageId);
-                if (idx !== -1 && (!last[idx].content || last[idx].content.trim() === '')) {
-                    last[idx] = { ...last[idx], content: '⏳ Waking server... this takes ~30s on first request. Please wait.' };
-                }
-                return last;
-            });
-        }, 5000);
 
         try {
             const response = await fetch(`${API_URL}/api/v1/chat/stream_chat`, {
@@ -813,7 +801,6 @@ const App = () => {
                 signal: abortController.signal,
             });
 
-            clearTimeout(warmingTimeout); // Server responded — cancel warming timer
             clearTimeout(hardTimeout);
 
             if (!response.body) throw new Error('No response body');
@@ -864,10 +851,7 @@ const App = () => {
                     const last = [...prev];
                     const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                     if (idx !== -1) {
-                        // Only overwrite warming message when real content arrives or keep empty placeholder
-                        if (hasRealText || !serverWarmingFired) {
-                            last[idx] = { ...last[idx], content: displayContent, sources };
-                        }
+                        last[idx] = { ...last[idx], content: displayContent, sources };
                     }
                     return last;
                 });
