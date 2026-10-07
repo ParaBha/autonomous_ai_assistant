@@ -803,6 +803,20 @@ const App = () => {
 
             clearTimeout(hardTimeout);
 
+            if (!response.ok) {
+                let errorText = `Server error ${response.status}`;
+                try {
+                    const errData = await response.json();
+                    errorText = errData.detail || errorText;
+                } catch {
+                    try {
+                        const txt = await response.text();
+                        if (txt) errorText = txt;
+                    } catch {}
+                }
+                throw new Error(errorText);
+            }
+
             if (!response.body) throw new Error('No response body');
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
@@ -925,13 +939,14 @@ const App = () => {
             } else {
                 (window as any).__retryCount = 0; // Reset on success
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Chat failed:', error);
+            const detail = error?.message || 'Connection error. Please try again.';
             setMessages(prev => {
                 const last = [...prev];
                 const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                 if (idx !== -1) {
-                    last[idx] = { ...last[idx], content: 'Sorry, I encountered an error. Please try again.' };
+                    last[idx] = { ...last[idx], content: `⚠️ ${detail}` };
                 }
                 return last;
             });
