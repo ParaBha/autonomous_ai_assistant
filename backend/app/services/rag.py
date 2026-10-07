@@ -20,10 +20,7 @@ class RAGService:
             chunk_overlap=50
         )
         self.vector_db_path = "chroma_db"
-        try:
-            self._get_vector_db()
-        except Exception as e:
-            print(f"Pre-warm vector db notice: {e}")
+        # Defer ChromaDB and GoogleGenerativeAIEmbeddings loading to lazy first access
 
     @property
     def embeddings(self):
