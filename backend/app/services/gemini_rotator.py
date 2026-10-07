@@ -10,10 +10,10 @@ RETRY_DELAY = 1       # seconds between retries on 503
 
 # Ordered fallback chain — when one model hits 503, the next is tried automatically
 MODEL_FALLBACK_CHAIN = [
+    "gemini-3.8-flash",
+    "gemini-3.5-flash",
     "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
     "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
 ]
 
 # ── Detect ThinkingConfig support once at startup ──────────────────────────────
