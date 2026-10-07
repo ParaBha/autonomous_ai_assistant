@@ -10,23 +10,68 @@ class IngestionService:
     @staticmethod
     def extract_text_from_pdf(file_path: str) -> str:
         text = ""
-        with fitz.open(file_path) as doc:
-            for page in doc:
-                text += page.get_text()
+        filename = os.path.basename(file_path)
+        try:
+            with fitz.open(file_path) as doc:
+                if doc.is_encrypted:
+                    try:
+                        doc.authenticate("")
+                    except Exception:
+                        return f"[PDF Document Asset: {filename} (Password Protected or Encrypted PDF)]"
+                for page in doc:
+                    page_text = page.get_text()
+                    if page_text:
+                        text += page_text + "\n"
+        except Exception as e:
+            return f"[PDF Document Asset: {filename} (Extraction note: {str(e)})]"
+
+        # If text is empty (scanned image-only PDF), attempt OCR page rendering
+        if not text.strip():
+            try:
+                with fitz.open(file_path) as doc:
+                    ocr_pages = []
+                    for page_num, page in enumerate(doc, start=1):
+                        pix = page.get_pixmap(dpi=150)
+                        from PIL import Image
+                        import pytesseract
+                        img = Image.open(io.BytesIO(pix.tobytes("png")))
+                        p_ocr = pytesseract.image_to_string(img).strip()
+                        if p_ocr:
+                            ocr_pages.append(f"--- PAGE {page_num} (OCR) ---\n{p_ocr}")
+                    if ocr_pages:
+                        return "\n\n".join(ocr_pages)
+            except Exception as ocr_err:
+                print(f"PDF OCR fallback notice for {filename}: {ocr_err}")
+            return f"[PDF Document Asset: {filename} (Scanned Image-Based PDF)]"
+
         return text
 
     @staticmethod
     def extract_text_with_pages(file_path: str) -> str:
-        ext = file_path.split(".")[-1].lower()
+        ext = file_path.split(".")[-1].lower() if "." in file_path else ""
         if ext != "pdf":
             return IngestionService.process_file(file_path)
         
         pages_text = []
-        with fitz.open(file_path) as doc:
-            for page_num, page in enumerate(doc, start=1):
-                p_text = page.get_text().strip()
-                if p_text:
-                    pages_text.append(f"--- PAGE {page_num} ---\n{p_text}")
+        filename = os.path.basename(file_path)
+        try:
+            with fitz.open(file_path) as doc:
+                if doc.is_encrypted:
+                    try:
+                        doc.authenticate("")
+                    except Exception:
+                        pass
+                for page_num, page in enumerate(doc, start=1):
+                    p_text = page.get_text().strip()
+                    if p_text:
+                        pages_text.append(f"--- PAGE {page_num} ---\n{p_text}")
+        except Exception as e:
+            print(f"extract_text_with_pages notice for {filename}: {e}")
+            return IngestionService.process_file(file_path)
+
+        if not pages_text:
+            return IngestionService.process_file(file_path)
+
         return "\n\n".join(pages_text)
 
     @staticmethod

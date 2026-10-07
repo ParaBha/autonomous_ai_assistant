@@ -15,31 +15,54 @@ router = APIRouter()
 @router.post("/upload")
 async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
     if not os.path.exists(settings.UPLOAD_DIR):
-        os.makedirs(settings.UPLOAD_DIR)
+        os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
         
-    file_path = os.path.join(settings.UPLOAD_DIR, file.filename)
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-        
+    # Sanitize filename
+    raw_filename = os.path.basename(file.filename or "uploaded_document.pdf")
+    sanitized_filename = re.sub(r'[^\w\s\.-]', '_', raw_filename)
+    if not sanitized_filename:
+        sanitized_filename = "uploaded_document.pdf"
+
+    file_path = os.path.join(settings.UPLOAD_DIR, sanitized_filename)
+    
+    try:
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as save_err:
+        raise HTTPException(status_code=500, detail=f"Failed to save file on server: {str(save_err)}")
+
     try:
         text = ingestion_service.process_file(file_path)
-        
+        if not text or len(text.strip()) == 0:
+            text = f"[PDF Asset File: {sanitized_filename}]"
+
+        file_ext = sanitized_filename.split(".")[-1].lower() if "." in sanitized_filename else "pdf"
+
         db_doc = DocumentModel(
-            filename=file.filename,
+            filename=sanitized_filename,
             file_path=file_path,
-            file_type=file.filename.split(".")[-1],
+            file_type=file_ext,
             extracted_text=text
         )
         db.add(db_doc)
         db.commit()
         db.refresh(db_doc)
         
-        # Ingest into RAG
-        rag_service.process_and_store(text, str(db_doc.id), {"filename": file.filename})
-        
-        return {"id": db_doc.id, "filename": db_doc.filename}
+        # Ingest into RAG vector DB safely
+        try:
+            rag_service.process_and_store(text, str(db_doc.id), {"filename": sanitized_filename})
+        except Exception as rag_err:
+            print(f"RAG vector indexing notice for {sanitized_filename}: {rag_err}")
+
+        return {
+            "id": db_doc.id,
+            "filename": db_doc.filename,
+            "file_type": db_doc.file_type,
+            "status": "success"
+        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Upload processing error: {str(e)}")
 
 @router.get("/documents")
 async def list_documents(db: Session = Depends(get_db)):

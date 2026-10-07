@@ -1189,7 +1189,26 @@ const App = () => {
                                                 <div className="flex justify-between items-start gap-3">
                                                     <div className="flex-1 min-w-0">
                                                         {msg.content ? (
-                                                            <MarkdownFormatter content={msg.content} />
+                                                            msg.content.startsWith('⚠️') ? (
+                                                                <div className="space-y-3">
+                                                                    <MarkdownFormatter content={msg.content} />
+                                                                    <button
+                                                                        onClick={() => {
+                                                                            const prevUserMsg = messages.slice(0, idx).reverse().find(m => m.role === 'user');
+                                                                            if (prevUserMsg) {
+                                                                                setMessages(prev => prev.filter((_, i) => i !== idx));
+                                                                                handleSend(prevUserMsg.content);
+                                                                            }
+                                                                        }}
+                                                                        className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-md transition-all active:scale-95"
+                                                                    >
+                                                                        <RefreshCw size={12} />
+                                                                        Retry Request
+                                                                    </button>
+                                                                </div>
+                                                            ) : (
+                                                                <MarkdownFormatter content={msg.content} />
+                                                            )
                                                         ) : (
                                                             <div className="flex items-center gap-2 py-1 text-indigo-500 font-medium text-sm">
                                                                 <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce"></span>
