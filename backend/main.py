@@ -15,6 +15,7 @@ from app.db.database import engine, Base
 
 Base.metadata.create_all(bind=engine)
 
+# Deployment Version: 1.0.1 (UI loading fix sync)
 app = FastAPI(title="Autonomous AI Research Assistant")
 
 app.add_middleware(
