@@ -157,6 +157,9 @@ Research Response:"""
         Synchronous generator — called from a thread pool via stream_query (async).
         Yields text chunks and metadata.
         """
+        # Instantly flush HTTP 200 OK response headers to browser client to prevent network abort/timeout
+        yield " "
+
         context, sources = self._retrieve_context_and_sources(question, document_id)
 
         if sources:

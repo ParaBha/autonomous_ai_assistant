@@ -785,9 +785,9 @@ const App = () => {
             sources: [] 
         }]);
 
-        // Abort controller — 90s total timeout
+        // Abort controller — 180s timeout to handle Render container cold-starts and deep RAG context synthesis
         const abortController = new AbortController();
-        const hardTimeout = setTimeout(() => abortController.abort(), 90000);
+        const hardTimeout = setTimeout(() => abortController.abort(), 180000);
 
         try {
             const response = await fetch(`${API_URL}/api/v1/chat/stream_chat`, {
