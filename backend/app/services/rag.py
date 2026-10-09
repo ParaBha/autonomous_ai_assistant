@@ -162,15 +162,17 @@ Research Response:"""
 
     def _sync_stream_query(self, question: str, chat_history: List[tuple], document_id: Optional[Any]):
         """
-        Synchronous generator — called from a thread pool via stream_query (async).
-        Yields text chunks and metadata.
+        Synchronous generator. Yields text chunks and metadata.
+        Called from a thread-pool via stream_query (async).
         """
-        # Instantly flush HTTP 200 OK response headers to browser client to prevent network abort/timeout
+        print(f"[RAG] _sync_stream_query started for: {question[:80]}")
+        # Flush HTTP 200 OK headers to the client immediately
         yield " "
 
         context, sources = self._retrieve_context_and_sources(question, document_id)
+        print(f"[RAG] context_len={len(context)}, sources={len(sources)}")
 
-        # Emit source metadata tags to frontend immediately
+        # Tell the frontend where the answer came from
         if sources:
             yield f"[[RESPONSE_SOURCE:DOCUMENTS]]\n"
             yield f"[[SOURCES_METADATA:{json.dumps(sources)}]]\n"
@@ -208,47 +210,61 @@ User Question: {question}
 Research Response:"""
 
         try:
+            chunk_count = 0
             for chunk in gemini_key_manager.stream_with_fallback(prompt, temperature=0.5, max_output_tokens=4096):
+                chunk_count += 1
+                if chunk_count == 1:
+                    print(f"[RAG] First Gemini chunk: {repr(chunk[:50])}")
                 yield chunk
+            print(f"[RAG] Streaming done. Chunks yielded: {chunk_count}")
         except APIKeysExhaustedError:
-            yield "\n\n[ERROR: 429 Rate Limit - All Gemini API keys are currently exhausted. Primary key is under a 60-second cooldown.]"
+            yield "\n\n[ERROR: 429 Rate Limit – All Gemini API keys are currently exhausted.]"
         except Exception as e:
+            print(f"[RAG] Stream error: {e}")
             yield f"\n\n[Error: {str(e)}]"
 
     async def stream_query(self, question: str, chat_history: List[tuple] = [], document_id: Optional[Any] = None):
         """
-        Async generator — runs the blocking sync stream in a thread pool
-        and uses the running event loop to put chunks into an asyncio.Queue safely.
-        Sends keepalive whitespace every 2s to prevent Render's proxy from closing
-        the connection while waiting for the first Gemini token.
+        Async generator. Runs the blocking _sync_stream_query in a thread executor
+        and forwards chunks via asyncio.Queue.
+        Sends keepalive spaces every 3s so proxy servers don't close the idle connection.
         """
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
-        _DONE = object()
+        _DONE = object()  # sentinel
 
         def _run_sync():
+            """Executed in thread pool — collects sync generator chunks and enqueues them."""
             try:
                 for chunk in self._sync_stream_query(question, chat_history, document_id):
-                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
+                    # run_coroutine_threadsafe is safe to call from any thread
+                    fut = asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
+                    fut.result(timeout=30)  # block this thread until put completes
             except Exception as ex:
-                loop.call_soon_threadsafe(queue.put_nowait, f"\n\n[Error: {str(ex)}]")
+                asyncio.run_coroutine_threadsafe(
+                    queue.put(f"\n\n[Error: {str(ex)}]"), loop
+                ).result(timeout=5)
             finally:
-                loop.call_soon_threadsafe(queue.put_nowait, _DONE)
+                asyncio.run_coroutine_threadsafe(queue.put(_DONE), loop).result(timeout=5)
 
-        loop.run_in_executor(None, _run_sync)
+        # Launch sync generator in a thread
+        future = loop.run_in_executor(None, _run_sync)
 
+        # Yield chunks as they arrive; send keepalive if we wait too long
         while True:
             try:
-                # Wait up to 2s for a chunk before sending a keepalive space
-                item = await asyncio.wait_for(queue.get(), timeout=2.0)
+                item = await asyncio.wait_for(queue.get(), timeout=3.0)
                 if item is _DONE:
                     break
                 yield item
             except asyncio.TimeoutError:
-                # No chunk yet — send a single space to keep the TCP connection alive
-                # The frontend strips leading/trailing whitespace so this is invisible
-                yield " "
+                yield " "  # keepalive — invisible to frontend (whitespace)
 
+        # Surface any thread exception (optional, for debugging)
+        try:
+            await asyncio.shield(asyncio.wrap_future(future))
+        except Exception:
+            pass
 
 
 rag_service = RAGService()

@@ -799,19 +799,36 @@ const App = () => {
         const abortController = new AbortController();
         const hardTimeout = setTimeout(() => abortController.abort(), 180000);
 
+        // Always use a relative path for the streaming endpoint.
+        // On localhost, Vite's proxy routes /api -> http://localhost:8000 (avoids CORS issues).
+        // On production (Vercel), VITE_API_URL is set so the absolute URL is built correctly.
+        const isLocalDev = typeof window !== 'undefined' && (
+            window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+        );
+        const streamEndpoint = isLocalDev
+            ? '/api/v1/chat/stream_chat'
+            : `${API_URL}/api/v1/chat/stream_chat`;
+
+        // Retrieve the auth token from axios defaults
+        const authToken = (axios.defaults.headers.common['Authorization'] as string) ||
+            (localStorage.getItem('access_token') ? `Bearer ${localStorage.getItem('access_token')}` : '');
+
         try {
-            const response = await fetch(`${API_URL}/api/v1/chat/stream_chat`, {
+            console.log('[Chat] Posting to:', streamEndpoint);
+            const response = await fetch(streamEndpoint, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': axios.defaults.headers.common['Authorization'] as string || ''
+                    'Authorization': authToken,
                 },
                 body: JSON.stringify({
                     message: textToSend,
-                    chat_history: messages
-                        .filter(m => m.role !== 'assistant' || m.content !== 'Hello! I am your Autonomous AI Research Assistant. How can I help you today?')
-                        .slice(-6)
-                        .map(m => [m.role, m.content]),
+                    chat_history: [
+                        ...messages
+                            .filter(m => m.role !== 'assistant' || m.content !== 'Hello! I am your Autonomous AI Research Assistant. How can I help you today?')
+                            .slice(-6)
+                            .map(m => [m.role, m.content]),
+                    ],
                     document_id: currentDocId
                 }),
                 signal: abortController.signal,
@@ -825,10 +842,7 @@ const App = () => {
                     const errData = await response.json();
                     errorText = errData.detail || errorText;
                 } catch {
-                    try {
-                        const txt = await response.text();
-                        if (txt) errorText = txt;
-                    } catch {}
+                    try { const txt = await response.text(); if (txt) errorText = txt; } catch {}
                 }
                 throw new Error(errorText);
             }
@@ -848,7 +862,7 @@ const App = () => {
                 rawStreamBuffer += chunk;
 
                 // Extract response source metadata tag
-                const srcTagMatch = rawStreamBuffer.match(/\[\[RESPONSE_SOURCE:(.*?)\]\]/);
+                const srcTagMatch = rawStreamBuffer.match(/\[\[RESPONSE_SOURCE:([\s\S]*?)\]\]/);
                 if (srcTagMatch) {
                     const tagVal = srcTagMatch[1].trim().toLowerCase();
                     if (tagVal === 'documents') responseSource = 'documents';
@@ -856,14 +870,14 @@ const App = () => {
                 }
 
                 // Extract sources metadata if present in stream buffer
-                const sourcesTagMatch = rawStreamBuffer.match(/\[\[SOURCES_METADATA:(.*?)\]\]/);
+                const sourcesTagMatch = rawStreamBuffer.match(/\[\[SOURCES_METADATA:([\s\S]*?)\]\]/);
                 if (sourcesTagMatch) {
                     try { 
                         sources = JSON.parse(sourcesTagMatch[1]);
                         responseSource = 'documents';
                     } catch {}
                 } else {
-                    const legacySrcMatch = rawStreamBuffer.match(/__SOURCES__:(.*?)\n/);
+                    const legacySrcMatch = rawStreamBuffer.match(/__SOURCES__:([\s\S]*?)\n/);
                     if (legacySrcMatch) {
                         try { sources = JSON.parse(legacySrcMatch[1]); responseSource = 'documents'; } catch {}
                     }
@@ -871,12 +885,16 @@ const App = () => {
 
                 // Clean display text by stripping metadata tags
                 let cleanText = rawStreamBuffer
-                    .replace(/\[\[RESPONSE_SOURCE:(.*?)\]\]\n?/g, '')
-                    .replace(/\[\[SOURCES_METADATA:(.*?)\]\]\n?/g, '')
-                    .replace(/__SOURCES__:(.*?)\n?/g, '');
+                    .replace(/\[\[RESPONSE_SOURCE:[\s\S]*?\]\]\n?/g, '')
+                    .replace(/\[\[SOURCES_METADATA:[\s\S]*?\]\]\n?/g, '')
+                    .replace(/__SOURCES__:[\s\S]*?\n?/g, '')
+                    .replace(/^\s+/, '');
+
+                // Strip any leftover partial metadata tags during mid-stream (e.g. "[[SOURCES_MET...")
+                cleanText = cleanText.replace(/\[\[(?:RESPONSE_SOURCE|SOURCES_METADATA)[\s\S]*$/g, '');
 
                 const hasRealText = cleanText.trim().length > 0;
-                const displayContent = hasRealText ? cleanText.replace(/^\s+/, '') : '';
+                const displayContent = hasRealText ? cleanText : '';
 
                 setMessages(prev => {
                     const last = [...prev];
@@ -894,9 +912,9 @@ const App = () => {
             }
 
             let finalCleanText = rawStreamBuffer
-                .replace(/\[\[RESPONSE_SOURCE:(.*?)\]\]\n?/g, '')
-                .replace(/\[\[SOURCES_METADATA:(.*?)\]\]\n?/g, '')
-                .replace(/__SOURCES__:(.*?)\n?/g, '')
+                .replace(/\[\[RESPONSE_SOURCE:[\s\S]*?\]\]\n?/g, '')
+                .replace(/\[\[SOURCES_METADATA:[\s\S]*?\]\]\n?/g, '')
+                .replace(/__SOURCES__:[\s\S]*?\n?/g, '')
                 .replace(/^\s+/, '');
 
             setMessages(prev => {
@@ -1327,14 +1345,6 @@ const App = () => {
                                             </div>
                                         </div>
                                     ))}
-                                    {isLoading && (
-                                        <div className="flex justify-start">
-                                            <div className="chat-bubble-ai border-indigo-500/20 animate-forge-loading text-indigo-600 dark:text-indigo-400 font-medium flex items-center gap-3 backdrop-blur-md bg-white/70 dark:bg-[#1a1a1e]/70 p-4 rounded-2xl">
-                                                <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-ping"></div>
-                                                Synthesizing research response...
-                                            </div>
-                                        </div>
-                                    )}
                                 </div>
 
                                 <div className="mt-auto px-2 pb-6 animate-slide-up delay-300 relative z-30">
