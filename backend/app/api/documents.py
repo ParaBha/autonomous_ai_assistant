@@ -12,6 +12,8 @@ from app.core.config import settings
 
 router = APIRouter()
 
+import uuid
+
 @router.post("/upload")
 async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
     if not os.path.exists(settings.UPLOAD_DIR):
@@ -23,7 +25,8 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
     if not sanitized_filename:
         sanitized_filename = "uploaded_document.pdf"
 
-    file_path = os.path.join(settings.UPLOAD_DIR, sanitized_filename)
+    unique_disk_name = f"{uuid.uuid4().hex[:8]}_{sanitized_filename}"
+    file_path = os.path.join(settings.UPLOAD_DIR, unique_disk_name)
     
     try:
         with open(file_path, "wb") as buffer:

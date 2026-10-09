@@ -370,6 +370,7 @@ const App = () => {
     const [isChatDragging, setIsChatDragging] = useState(false);
     interface ChatAttachedFile {
         id: string;
+        docId?: number;
         file?: File;
         name: string;
         sizeBytes: number;
@@ -444,20 +445,24 @@ const App = () => {
             try {
                 const formData = new FormData();
                 formData.append('file', file);
-                await axios.post('/api/v1/docs/upload', formData, {
+                const uploadRes = await axios.post('/api/v1/docs/upload', formData, {
                     headers: { 'Content-Type': 'multipart/form-data' },
                     onUploadProgress: (evt) => {
                         const percent = evt.total ? Math.round((evt.loaded * 100) / evt.total) : 85;
                         setChatAttachedFiles(prev => prev.map(item => item.id === fileId ? { ...item, progress: percent } : item));
                     }
                 });
-                setChatAttachedFiles(prev => prev.map(item => item.id === fileId ? { ...item, status: 'uploaded', progress: 100 } : item));
-                showToast(`"${file.name}" attached successfully!`, 'success');
+                const docId = uploadRes.data?.id;
+                setChatAttachedFiles(prev => prev.map(item => item.id === fileId ? { ...item, status: 'uploaded', docId, progress: 100 } : item));
+                if (docId) {
+                    setFocusedDocument({ id: String(docId), name: file.name });
+                    setSelectedResearchDocId(docId);
+                }
+                showToast(`"${file.name}" uploaded and attached!`, 'success');
                 fetchDocuments();
                 fetchVisualizations();
                 fetchInsights();
             } catch (err) {
-                // Keep attached in chat state even if backend returns doc parsing note
                 setChatAttachedFiles(prev => prev.map(item => item.id === fileId ? { ...item, status: 'uploaded', progress: 100 } : item));
                 showToast(`"${file.name}" attached to Research Chat`, 'success');
                 fetchDocuments();
@@ -764,8 +769,9 @@ const App = () => {
         const userMessage: Message = { role: 'user', content: textToSend };
         setMessages(prev => [...prev, userMessage]);
         
-        // Check for specific document context (if any)
-        const currentDocId = focusedDocument?.id || null;
+        // Check for specific document context (if any attached or focused)
+        const attachedWithDocId = validAttachedFiles.find(f => f.docId);
+        const currentDocId = focusedDocument?.id || (attachedWithDocId ? String(attachedWithDocId.docId) : null);
         
         if (!overrideMessage) setInput('');
         setIsLoading(true);
@@ -794,7 +800,7 @@ const App = () => {
                     message: textToSend,
                     chat_history: messages
                         .filter(m => m.role !== 'assistant' || m.content !== 'Hello! I am your Autonomous AI Research Assistant. How can I help you today?')
-                        .slice(-3)
+                        .slice(-6)
                         .map(m => [m.role, m.content]),
                     document_id: currentDocId
                 }),
@@ -820,46 +826,34 @@ const App = () => {
             if (!response.body) throw new Error('No response body');
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
-            let accumulatedContent = '';
+            let rawStreamBuffer = '';
             let sources: any[] = [];
-            let sourcesBuffer = '';   // accumulate __SOURCES__ line across chunks
 
             while (true) {
                 const { value, done } = await reader.read();
                 if (done) break;
 
-                const raw = decoder.decode(value, { stream: true });
+                const chunk = decoder.decode(value, { stream: true });
+                rawStreamBuffer += chunk;
 
-                // Check for __SOURCES__ metadata — may span multiple chunks
-                sourcesBuffer += raw;
-                const srcIdx = sourcesBuffer.indexOf('__SOURCES__:');
-                if (srcIdx !== -1) {
-                    // Extract everything before the sources line as content
-                    const beforeSrc = sourcesBuffer.slice(0, srcIdx);
-                    const afterSrcStart = sourcesBuffer.slice(srcIdx + '__SOURCES__:'.length);
-                    const newlineIdx = afterSrcStart.indexOf('\n');
-                    if (newlineIdx !== -1) {
-                        // Full sources line received
-                        const srcJson = afterSrcStart.slice(0, newlineIdx);
-                        try { sources = JSON.parse(srcJson); } catch {}
-                        // Remainder after sources line goes back into processing
-                        const remainder = afterSrcStart.slice(newlineIdx + 1);
-                        accumulatedContent += beforeSrc + remainder;
-                        sourcesBuffer = '';
-                    } else {
-                        // Sources line not complete yet — keep buffering
-                        accumulatedContent += beforeSrc;
-                        sourcesBuffer = '__SOURCES__:' + afterSrcStart;
+                // Extract sources metadata if present in stream buffer
+                const sourcesTagMatch = rawStreamBuffer.match(/\[\[SOURCES_METADATA:(.*?)\]\]/);
+                if (sourcesTagMatch) {
+                    try { sources = JSON.parse(sourcesTagMatch[1]); } catch {}
+                } else {
+                    const legacySrcMatch = rawStreamBuffer.match(/__SOURCES__:(.*?)\n/);
+                    if (legacySrcMatch) {
+                        try { sources = JSON.parse(legacySrcMatch[1]); } catch {}
                     }
-                } else if (!sourcesBuffer.includes('__SOURCES__')) {
-                    // No sources header in buffer — flush everything immediately
-                    accumulatedContent += sourcesBuffer;
-                    sourcesBuffer = '';
                 }
 
-                // Update UI on every chunk — ignore leading whitespace keepalives until real text arrives
-                const hasRealText = accumulatedContent.trim().length > 0;
-                const displayContent = hasRealText ? accumulatedContent.replace(/^\s+/, '') : '';
+                // Clean display text by stripping metadata tags
+                let cleanText = rawStreamBuffer
+                    .replace(/\[\[SOURCES_METADATA:(.*?)\]\]\n?/g, '')
+                    .replace(/__SOURCES__:(.*?)\n?/g, '');
+
+                const hasRealText = cleanText.trim().length > 0;
+                const displayContent = hasRealText ? cleanText.replace(/^\s+/, '') : '';
 
                 setMessages(prev => {
                     const last = [...prev];
@@ -871,27 +865,25 @@ const App = () => {
                 });
             }
 
-            // Final flush of any remaining sourcesBuffer
-            if (sourcesBuffer && !sourcesBuffer.startsWith('__SOURCES__:')) {
-                accumulatedContent += sourcesBuffer;
-            }
-
-            const finalDisplayContent = accumulatedContent.replace(/^\s+/, '');
+            let finalCleanText = rawStreamBuffer
+                .replace(/\[\[SOURCES_METADATA:(.*?)\]\]\n?/g, '')
+                .replace(/__SOURCES__:(.*?)\n?/g, '')
+                .replace(/^\s+/, '');
 
             setMessages(prev => {
                 const last = [...prev];
                 const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                 if (idx !== -1) {
-                    last[idx] = { ...last[idx], content: finalDisplayContent, sources };
+                    last[idx] = { ...last[idx], content: finalCleanText, sources };
                 }
                 return last;
             });
             
             // Speak if enabled
-            if (voiceEnabled) speak(finalDisplayContent);
+            if (voiceEnabled) speak(finalCleanText);
 
             // ── Auto-retry on 429 in streamed content ──────────────────────────
-            if (accumulatedContent.includes('[ERROR: 429') || accumulatedContent.includes('Rate Limit')) {
+            if (rawStreamBuffer.includes('[ERROR: 429') || rawStreamBuffer.includes('Rate Limit')) {
                 const retryCount = (window as any).__retryCount || 0;
                 if (retryCount < 2) {
                     (window as any).__retryCount = retryCount + 1;
@@ -982,9 +974,14 @@ const App = () => {
         formData.append('file', file);
 
         try {
-            await axios.post('/api/v1/docs/upload', formData, {
+            const res = await axios.post('/api/v1/docs/upload', formData, {
                 headers: { 'Content-Type': 'multipart/form-data' }
             });
+            const docId = res.data?.id;
+            if (docId) {
+                setFocusedDocument({ id: String(docId), name: file.name });
+                setSelectedResearchDocId(docId);
+            }
             showToast(`"${file.name}" uploaded successfully!`, 'success');
             setMessages(prev => [...prev, {
                 role: 'assistant',

@@ -64,26 +64,68 @@ class RAGService:
             print(f"Error in process_and_store: {str(e)}")
             traceback.print_exc()
 
+    def _retrieve_context_and_sources(self, question: str, document_id: Optional[Any] = None) -> tuple[str, List[Dict[str, Any]]]:
+        sources = []
+        context_parts = []
+        doc_id_str = str(document_id).strip() if document_id is not None and str(document_id).strip() != "" and str(document_id).strip().lower() != "null" else None
+
+        vector_db = self._get_vector_db()
+        if vector_db is not None:
+            try:
+                if vector_db._collection.count() > 0:
+                    if doc_id_str:
+                        filter_dict = {"document_id": doc_id_str}
+                        docs = vector_db.similarity_search(question, k=4, filter=filter_dict)
+                    else:
+                        docs = vector_db.similarity_search(question, k=4)
+                    
+                    if docs:
+                        for doc in docs:
+                            fname = doc.metadata.get("filename", "Document")
+                            doc_id = doc.metadata.get("document_id")
+                            context_parts.append(f"--- Document ({fname}) ---\n{doc.page_content}")
+                            if not any(s.get("filename") == fname for s in sources):
+                                sources.append({"filename": fname, "document_id": doc_id, "content": doc.page_content[:200]})
+            except Exception as e:
+                print(f"ChromaDB similarity search notice: {e}")
+
+        # Fallback to DB documents if ChromaDB yielded no text
+        if not context_parts:
+            try:
+                from app.db.database import SessionLocal
+                from app.models.models import Document as DocumentModel
+                db = SessionLocal()
+                try:
+                    if doc_id_str:
+                        db_docs = db.query(DocumentModel).filter(DocumentModel.id == int(doc_id_str)).all()
+                    else:
+                        db_docs = db.query(DocumentModel).order_by(DocumentModel.id.desc()).limit(3).all()
+                    
+                    for db_doc in db_docs:
+                        if db_doc and db_doc.extracted_text and len(db_doc.extracted_text.strip()) > 0:
+                            context_parts.append(f"--- Document ({db_doc.filename}) ---\n{db_doc.extracted_text[:4000]}")
+                            sources.append({"filename": db_doc.filename, "document_id": str(db_doc.id)})
+                finally:
+                    db.close()
+            except Exception as ex:
+                print(f"DB fallback error: {ex}")
+
+        context = "\n\n".join(context_parts)
+        return context, sources
+
     def query(self, question: str, chat_history: List[tuple] = [], document_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Executes a direct single-pass research query over retrieved document context.
         """
-        sources = []
-        context = ""
+        context, sources = self._retrieve_context_and_sources(question, document_id)
 
-        # Only hit ChromaDB if the user has a specific document selected
-        if document_id is not None:
-            vector_db = self._get_vector_db()
-            if vector_db is not None:
-                filter_dict = {"document_id": str(document_id)}
-                try:
-                    if vector_db._collection.count() > 0:
-                        docs = vector_db.similarity_search(question, k=3, filter=filter_dict)
-                        if docs:
-                            context = "\n\n".join([doc.page_content for doc in docs])
-                            sources = [{"content": doc.page_content, **doc.metadata} for doc in docs]
-                except Exception as e:
-                    print(f"RAG search error: {e}")
+        history_text = ""
+        if chat_history:
+            formatted_history = []
+            for role, content in chat_history:
+                r_name = "User" if str(role).lower() == "user" else "Assistant"
+                formatted_history.append(f"{r_name}: {content}")
+            history_text = "\n\nPrevious Conversation History:\n" + "\n".join(formatted_history)
 
         prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
 Your task is to provide complete, highly thorough, articulate, and accurate research responses.
@@ -95,7 +137,7 @@ RESPONSE GUIDELINES:
 - Be precise, informative, and complete.
 
 Context from Uploaded Research Documents:
-{context if context else 'No specific document context attached. Provide a clear, detailed general research answer.'}
+{context if context else 'No specific document context attached. Provide a clear, detailed general research answer.'}{history_text}
 
 User Question: {question}
 
@@ -113,43 +155,20 @@ Research Response:"""
     def _sync_stream_query(self, question: str, chat_history: List[tuple], document_id: Optional[Any]):
         """
         Synchronous generator — called from a thread pool via stream_query (async).
-        Yields text chunks or __SOURCES__ metadata lines.
+        Yields text chunks and metadata.
         """
-        sources = []
-        context = ""
-        doc_id_str = str(document_id) if document_id is not None else None
+        context, sources = self._retrieve_context_and_sources(question, document_id)
 
-        # Only hit ChromaDB if user has a specific document selected
-        if doc_id_str:
-            vector_db = self._get_vector_db()
-            if vector_db is not None:
-                filter_dict = {"document_id": doc_id_str}
-                try:
-                    if vector_db._collection.count() > 0:
-                        docs = vector_db.similarity_search(question, k=3, filter=filter_dict)
-                        if docs:
-                            context = "\n\n".join([f"Source ({doc.metadata.get('filename', 'Doc')}): {doc.page_content[:1000]}" for doc in docs])
-                            sources = [{"filename": doc.metadata.get("filename", "Unknown"), "document_id": doc.metadata.get("document_id")} for doc in docs]
-                            yield f"__SOURCES__:{json.dumps(sources)}\n"
-                except Exception as e:
-                    print(f"Similarity search notice: {e}")
+        if sources:
+            yield f"[[SOURCES_METADATA:{json.dumps(sources)}]]\n"
 
-            # Fallback to DB text if vector search came back empty
-            if not context:
-                try:
-                    from app.db.database import SessionLocal
-                    from app.models.models import Document as DocumentModel
-                    db = SessionLocal()
-                    try:
-                        db_doc = db.query(DocumentModel).filter(DocumentModel.id == int(doc_id_str)).first()
-                        if db_doc and db_doc.extracted_text:
-                            context = f"Source ({db_doc.filename}): {db_doc.extracted_text[:5000]}"
-                            sources = [{"filename": db_doc.filename, "document_id": str(db_doc.id)}]
-                            yield f"__SOURCES__:{json.dumps(sources)}\n"
-                    finally:
-                        db.close()
-                except Exception as ex:
-                    print(f"DB fallback error: {ex}")
+        history_text = ""
+        if chat_history:
+            formatted_history = []
+            for role, content in chat_history:
+                r_name = "User" if str(role).lower() == "user" else "Assistant"
+                formatted_history.append(f"{r_name}: {content}")
+            history_text = "\n\nPrevious Conversation History:\n" + "\n".join(formatted_history)
 
         prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
 Your task is to provide complete, highly thorough, articulate, and accurate research responses.
@@ -161,7 +180,7 @@ RESPONSE GUIDELINES:
 - Be precise, informative, and complete.
 
 Context from Uploaded Research Documents:
-{context if context else 'No specific document context attached. Provide a clear, detailed general research answer.'}
+{context if context else 'No specific document context attached. Provide a clear, detailed general research answer.'}{history_text}
 
 User Question: {question}
 
@@ -169,7 +188,6 @@ Research Response:"""
 
         try:
             # max_output_tokens=4096 keeps first-token latency low on gemini-2.5-flash;
-            # the model still answers fully — 4096 tokens ≈ 3000 words which covers most responses.
             for chunk in gemini_key_manager.stream_with_fallback(prompt, temperature=0.5, max_output_tokens=4096):
                 yield chunk
         except APIKeysExhaustedError:

@@ -11,9 +11,9 @@ RETRY_DELAY = 1       # seconds between retries on 503
 # Ordered fallback chain — when one model hits 503, the next is tried automatically
 MODEL_FALLBACK_CHAIN = [
     "gemini-2.5-flash",
+    "gemini-2.0-flash",
     "gemini-2.5-flash-lite",
     "gemini-1.5-flash",
-    "gemini-3.8-flash",
 ]
 
 # ── Detect ThinkingConfig support once at startup ──────────────────────────────
@@ -190,8 +190,12 @@ class GeminiKeyManager:
                     if target_model != requested:
                         print(f"[GEMINI API MANAGER] Streaming with fallback model: {target_model}")
                     for chunk in res_stream:
-                        if chunk.text:
-                            yield chunk.text
+                        try:
+                            text_piece = chunk.text
+                            if text_piece:
+                                yield text_piece
+                        except (ValueError, AttributeError):
+                            pass
                     return  # success
                 except Exception as e:
                     if self.is_unavailable_error(e):
@@ -215,8 +219,12 @@ class GeminiKeyManager:
                                         config=config,
                                     )
                                     for chunk in res_stream:
-                                        if chunk.text:
-                                            yield chunk.text
+                                        try:
+                                            text_piece = chunk.text
+                                            if text_piece:
+                                                yield text_piece
+                                        except (ValueError, AttributeError):
+                                            pass
                                     return
                                 except Exception as sec_e:
                                     if self.is_rate_limit_error(sec_e):
