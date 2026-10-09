@@ -29,11 +29,11 @@ const MarkdownFormatter = ({ content }: { content: string }) => {
             ) : s
         ));
 
-        // Gemini Additional Knowledge Badges: [GEMINI ADDITIONAL KNOWLEDGE] or [ADDITIONAL KNOWLEDGE]
+        // Additional Knowledge Badges: [ADDITIONAL KNOWLEDGE] or [GEMINI ADDITIONAL KNOWLEDGE]
         parts = parts.flatMap(p => typeof p !== 'string' ? p : p.split(/(\[(?:GEMINI\s+)?ADDITIONAL\s+KNOWLEDGE\])/gi).map((s, j) => 
             /^\[(?:GEMINI\s+)?ADDITIONAL\s+KNOWLEDGE\]$/i.test(s) ? (
                 <span key={j} className="inline-flex items-center gap-1 mx-1 px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-gradient-to-r from-purple-600 to-pink-600 text-white shadow-md shadow-purple-500/20">
-                    ✨ GEMINI AI KNOWLEDGE
+                    ✨ Research Knowledge
                 </span>
             ) : s
         ));
@@ -1248,7 +1248,7 @@ const App = () => {
                                                                 ) : (
                                                                     <div className="flex items-center gap-1.5 px-3 py-1 rounded-full font-semibold bg-gradient-to-r from-purple-500/15 via-indigo-500/15 to-pink-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30 shadow-sm">
                                                                         <Sparkles size={13} className="text-purple-500 animate-pulse" />
-                                                                        <span>Source: Gemini AI Knowledge Base</span>
+                                                                        <span>Source: Research Knowledge</span>
                                                                     </div>
                                                                 )}
                                                                 <div className="text-[11px] font-medium text-slate-400 dark:text-slate-500 flex items-center gap-1">

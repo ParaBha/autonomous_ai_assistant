@@ -130,9 +130,9 @@ class RAGService:
             history_text = "\n\nPrevious Conversation History:\n" + "\n".join(formatted_history)
 
         source_instruction = (
-            "Context from Uploaded Research Documents is provided below. Prioritize information from these uploaded documents. If you add additional facts beyond the documents, mark those parts with '[GEMINI ADDITIONAL KNOWLEDGE]'."
+            "Context from Uploaded Research Documents is provided below. Prioritize information from these uploaded documents. If you add additional facts beyond the documents, mark those parts with '[ADDITIONAL KNOWLEDGE]'."
             if context else
-            "No uploaded research document matched this query. Answer directly using your Gemini AI Knowledge Base. Include '[GEMINI ADDITIONAL KNOWLEDGE]' at the beginning."
+            "No uploaded research document matched this query. Answer directly using your Research Knowledge. Include '[ADDITIONAL KNOWLEDGE]' at the beginning."
         )
 
         prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
@@ -188,9 +188,9 @@ Research Response:"""
             history_text = "\n\nPrevious Conversation History:\n" + "\n".join(formatted_history)
 
         source_instruction = (
-            "Context from Uploaded Research Documents is provided below. Prioritize information from these uploaded documents. If you add extra facts, mark those parts with '[GEMINI ADDITIONAL KNOWLEDGE]'."
+            "Context from Uploaded Research Documents is provided below. Prioritize information from these uploaded documents. If you add extra facts, mark those parts with '[ADDITIONAL KNOWLEDGE]'."
             if context else
-            "No uploaded research document matched this query. Answer directly using your Gemini AI Knowledge Base. Include '[GEMINI ADDITIONAL KNOWLEDGE]' at the start of your answer."
+            "No uploaded research document matched this query. Answer directly using your Research Knowledge. Include '[ADDITIONAL KNOWLEDGE]' at the start of your answer."
         )
 
         prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
