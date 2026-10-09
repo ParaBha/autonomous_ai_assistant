@@ -38,6 +38,15 @@ const MarkdownFormatter = ({ content }: { content: string }) => {
             ) : s
         ));
 
+        // Document Source Badges: [SOURCE: ...]
+        parts = parts.flatMap(p => typeof p !== 'string' ? p : p.split(/(\[SOURCE:\s*.*?\])/gi).map((s, j) => 
+            /^\[SOURCE:\s*.*?\]$/i.test(s) ? (
+                <span key={j} className="inline-flex items-center gap-1 mx-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-500/40 shadow-sm">
+                    📄 {s.slice(8, -1)}
+                </span>
+            ) : s
+        ));
+
         // Bold: **text**
         parts = parts.flatMap(p => typeof p !== 'string' ? p : p.split(/(\*\*.*?\*\*)/g).map((s, j) => 
             s.startsWith('**') && s.endsWith('**') ? <strong key={j} className="font-bold text-indigo-600 dark:text-indigo-300">{s.slice(2, -2)}</strong> : s
@@ -118,6 +127,7 @@ const App = () => {
         content: string;
         id?: number;
         sources?: any[];
+        responseSource?: 'documents' | 'gemini' | 'hybrid';
     }
     const [messages, setMessages] = useState<Message[]>([
         { role: 'assistant', content: 'Hello! I am your Autonomous AI Research Assistant. How can I help you today?' }
@@ -828,6 +838,7 @@ const App = () => {
             const decoder = new TextDecoder();
             let rawStreamBuffer = '';
             let sources: any[] = [];
+            let responseSource: 'documents' | 'gemini' | 'hybrid' | undefined = undefined;
 
             while (true) {
                 const { value, done } = await reader.read();
@@ -836,19 +847,31 @@ const App = () => {
                 const chunk = decoder.decode(value, { stream: true });
                 rawStreamBuffer += chunk;
 
+                // Extract response source metadata tag
+                const srcTagMatch = rawStreamBuffer.match(/\[\[RESPONSE_SOURCE:(.*?)\]\]/);
+                if (srcTagMatch) {
+                    const tagVal = srcTagMatch[1].trim().toLowerCase();
+                    if (tagVal === 'documents') responseSource = 'documents';
+                    else if (tagVal === 'gemini') responseSource = 'gemini';
+                }
+
                 // Extract sources metadata if present in stream buffer
                 const sourcesTagMatch = rawStreamBuffer.match(/\[\[SOURCES_METADATA:(.*?)\]\]/);
                 if (sourcesTagMatch) {
-                    try { sources = JSON.parse(sourcesTagMatch[1]); } catch {}
+                    try { 
+                        sources = JSON.parse(sourcesTagMatch[1]);
+                        responseSource = 'documents';
+                    } catch {}
                 } else {
                     const legacySrcMatch = rawStreamBuffer.match(/__SOURCES__:(.*?)\n/);
                     if (legacySrcMatch) {
-                        try { sources = JSON.parse(legacySrcMatch[1]); } catch {}
+                        try { sources = JSON.parse(legacySrcMatch[1]); responseSource = 'documents'; } catch {}
                     }
                 }
 
                 // Clean display text by stripping metadata tags
                 let cleanText = rawStreamBuffer
+                    .replace(/\[\[RESPONSE_SOURCE:(.*?)\]\]\n?/g, '')
                     .replace(/\[\[SOURCES_METADATA:(.*?)\]\]\n?/g, '')
                     .replace(/__SOURCES__:(.*?)\n?/g, '');
 
@@ -859,13 +882,19 @@ const App = () => {
                     const last = [...prev];
                     const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                     if (idx !== -1) {
-                        last[idx] = { ...last[idx], content: displayContent, sources };
+                        last[idx] = { 
+                            ...last[idx], 
+                            content: displayContent, 
+                            sources,
+                            responseSource: responseSource || (sources.length > 0 ? 'documents' : 'gemini')
+                        };
                     }
                     return last;
                 });
             }
 
             let finalCleanText = rawStreamBuffer
+                .replace(/\[\[RESPONSE_SOURCE:(.*?)\]\]\n?/g, '')
                 .replace(/\[\[SOURCES_METADATA:(.*?)\]\]\n?/g, '')
                 .replace(/__SOURCES__:(.*?)\n?/g, '')
                 .replace(/^\s+/, '');
@@ -874,7 +903,12 @@ const App = () => {
                 const last = [...prev];
                 const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                 if (idx !== -1) {
-                    last[idx] = { ...last[idx], content: finalCleanText, sources };
+                    last[idx] = { 
+                        ...last[idx], 
+                        content: finalCleanText, 
+                        sources,
+                        responseSource: responseSource || (sources.length > 0 ? 'documents' : 'gemini')
+                    };
                 }
                 return last;
             });
@@ -1185,6 +1219,27 @@ const App = () => {
                                                 }`}>
                                                 <div className="flex justify-between items-start gap-3">
                                                     <div className="flex-1 min-w-0">
+                                                        {/* Source Indicator Badge header for Assistant Responses */}
+                                                        {msg.role === 'assistant' && msg.content && !msg.content.startsWith('⚠️') && (
+                                                            <div className="flex flex-wrap items-center justify-between gap-2 mb-3 pb-2 border-b border-slate-200/60 dark:border-slate-800/80 text-xs">
+                                                                {((msg.sources && msg.sources.length > 0) || msg.responseSource === 'documents') ? (
+                                                                    <div className="flex items-center gap-1.5 px-3 py-1 rounded-full font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/25 shadow-sm">
+                                                                        <FileText size={13} className="text-emerald-500" />
+                                                                        <span>Source: Uploaded Research Document{msg.sources && msg.sources.length > 1 ? 's' : ''}</span>
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="flex items-center gap-1.5 px-3 py-1 rounded-full font-semibold bg-gradient-to-r from-purple-500/15 via-indigo-500/15 to-pink-500/15 text-purple-700 dark:text-purple-300 border border-purple-500/30 shadow-sm">
+                                                                        <Sparkles size={13} className="text-purple-500 animate-pulse" />
+                                                                        <span>Source: Gemini AI Knowledge Base</span>
+                                                                    </div>
+                                                                )}
+                                                                <div className="text-[11px] font-medium text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                                                                    <Zap size={11} className="text-amber-500" />
+                                                                    <span>Fast Response Mode</span>
+                                                                </div>
+                                                            </div>
+                                                        )}
+
                                                         {msg.content ? (
                                                             msg.content.startsWith('⚠️') ? (
                                                                 <div className="space-y-3">
@@ -1211,7 +1266,24 @@ const App = () => {
                                                                 <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce"></span>
                                                                 <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce [animation-delay:0.15s]"></span>
                                                                 <span className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce [animation-delay:0.3s]"></span>
-                                                                <span className="text-xs text-indigo-400/80 font-medium ml-1">Analyzing research sources...</span>
+                                                                <span className="text-xs text-indigo-400/80 font-medium ml-1">Synthesizing research response...</span>
+                                                            </div>
+                                                        )}
+
+                                                        {/* Cited Sources List */}
+                                                        {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
+                                                            <div className="mt-4 pt-3 border-t border-slate-200/50 dark:border-slate-800/50">
+                                                                <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-2 flex items-center gap-1">
+                                                                    <FileText size={12} /> Cited Research Context ({msg.sources.length}):
+                                                                </p>
+                                                                <div className="flex flex-wrap gap-2">
+                                                                    {msg.sources.map((src: any, sIdx: number) => (
+                                                                        <div key={sIdx} className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/60 text-xs font-medium text-slate-700 dark:text-slate-300">
+                                                                            <Paperclip size={12} className="text-indigo-500" />
+                                                                            <span>{src.filename || 'Document'}</span>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
                                                             </div>
                                                         )}
                                                     </div>

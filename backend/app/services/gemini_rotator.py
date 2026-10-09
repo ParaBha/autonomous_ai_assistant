@@ -8,23 +8,26 @@ from app.core.config import settings
 MAX_RETRIES = 2       # retries per model before falling back to next model
 RETRY_DELAY = 1       # seconds between retries on 503
 
-# Ordered fallback chain — when one model hits 503, the next is tried automatically
+# Ordered fallback chain — active supported Gemini models
 MODEL_FALLBACK_CHAIN = [
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.5-flash-lite",
-    "gemini-1.5-flash",
+    "gemini-flash-latest",
+    "gemini-pro-latest",
 ]
 
-# ── Detect ThinkingConfig support once at startup ──────────────────────────────
-# ThinkingConfig.budget_tokens was added in google-genai 0.8.x.
-# We probe it once here so we never double-call the API at runtime.
 def _build_config(temperature: float, max_output_tokens: int) -> types.GenerateContentConfig:
-    """Return a standard fast GenerateContentConfig."""
-    return types.GenerateContentConfig(
-        temperature=temperature,
-        max_output_tokens=max_output_tokens,
-    )
+    """Return a fast GenerateContentConfig with zero thinking budget for minimal first-token latency."""
+    try:
+        return types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+            thinking_config=types.ThinkingConfig(thinking_budget=0)
+        )
+    except Exception:
+        return types.GenerateContentConfig(
+            temperature=temperature,
+            max_output_tokens=max_output_tokens,
+        )
 
 class APIKeysExhaustedError(Exception):
     """Raised when all configured Gemini API keys are exhausted due to rate limits (429 / ResourceExhausted)."""
@@ -90,7 +93,7 @@ class GeminiKeyManager:
 
     def is_unavailable_error(self, e: Exception) -> bool:
         err_msg = str(e).lower()
-        return "503" in err_msg or "unavailable" in err_msg
+        return any(term in err_msg for term in ["503", "unavailable", "404", "not_found", "not found", "no longer available"])
 
     def _get_cached_client(self, key: str) -> genai.Client:
         """Return a cached google.genai.Client instance."""
@@ -189,13 +192,30 @@ class GeminiKeyManager:
                     )
                     if target_model != requested:
                         print(f"[GEMINI API MANAGER] Streaming with fallback model: {target_model}")
+                    yielded_any = False
                     for chunk in res_stream:
+                        text_piece = ""
                         try:
-                            text_piece = chunk.text
-                            if text_piece:
-                                yield text_piece
+                            text_piece = chunk.text or ""
                         except (ValueError, AttributeError):
-                            pass
+                            if hasattr(chunk, "candidates") and chunk.candidates:
+                                for cand in chunk.candidates:
+                                    if hasattr(cand, "content") and cand.content and hasattr(cand.content, "parts"):
+                                        for part in cand.content.parts:
+                                            if hasattr(part, "text") and part.text:
+                                                text_piece += part.text
+                        if text_piece:
+                            yielded_any = True
+                            yield text_piece
+
+                    if not yielded_any:
+                        full_resp = client.models.generate_content(
+                            model=target_model,
+                            contents=prompt,
+                            config=config,
+                        )
+                        if full_resp and full_resp.text:
+                            yield full_resp.text
                     return  # success
                 except Exception as e:
                     if self.is_unavailable_error(e):
@@ -218,13 +238,30 @@ class GeminiKeyManager:
                                         contents=prompt,
                                         config=config,
                                     )
+                                    yielded_any_sec = False
                                     for chunk in res_stream:
+                                        text_piece = ""
                                         try:
-                                            text_piece = chunk.text
-                                            if text_piece:
-                                                yield text_piece
+                                            text_piece = chunk.text or ""
                                         except (ValueError, AttributeError):
-                                            pass
+                                            if hasattr(chunk, "candidates") and chunk.candidates:
+                                                for cand in chunk.candidates:
+                                                    if hasattr(cand, "content") and cand.content and hasattr(cand.content, "parts"):
+                                                        for part in cand.content.parts:
+                                                            if hasattr(part, "text") and part.text:
+                                                                text_piece += part.text
+                                        if text_piece:
+                                            yielded_any_sec = True
+                                            yield text_piece
+
+                                    if not yielded_any_sec:
+                                        full_resp = client_sec.models.generate_content(
+                                            model=target_model,
+                                            contents=prompt,
+                                            config=config,
+                                        )
+                                        if full_resp and full_resp.text:
+                                            yield full_resp.text
                                     return
                                 except Exception as sec_e:
                                     if self.is_rate_limit_error(sec_e):

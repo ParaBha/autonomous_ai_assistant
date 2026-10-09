@@ -69,25 +69,27 @@ class RAGService:
         context_parts = []
         doc_id_str = str(document_id).strip() if document_id is not None and str(document_id).strip() != "" and str(document_id).strip().lower() != "null" else None
 
-        vector_db = self._get_vector_db()
-        if vector_db is not None:
-            try:
-                if vector_db._collection.count() > 0:
-                    if doc_id_str:
-                        filter_dict = {"document_id": doc_id_str}
-                        docs = vector_db.similarity_search(question, k=4, filter=filter_dict)
-                    else:
-                        docs = vector_db.similarity_search(question, k=4)
-                    
-                    if docs:
-                        for doc in docs:
-                            fname = doc.metadata.get("filename", "Document")
-                            doc_id = doc.metadata.get("document_id")
-                            context_parts.append(f"--- Document ({fname}) ---\n{doc.page_content}")
-                            if not any(s.get("filename") == fname for s in sources):
-                                sources.append({"filename": fname, "document_id": doc_id, "content": doc.page_content[:200]})
-            except Exception as e:
-                print(f"ChromaDB similarity search notice: {e}")
+        # Fast exit: check if vector DB directory exists before lazy loading embeddings
+        if os.path.exists(self.vector_db_path):
+            vector_db = self._get_vector_db()
+            if vector_db is not None:
+                try:
+                    if vector_db._collection.count() > 0:
+                        if doc_id_str:
+                            filter_dict = {"document_id": doc_id_str}
+                            docs = vector_db.similarity_search(question, k=4, filter=filter_dict)
+                        else:
+                            docs = vector_db.similarity_search(question, k=4)
+                        
+                        if docs:
+                            for doc in docs:
+                                fname = doc.metadata.get("filename", "Document")
+                                doc_id = doc.metadata.get("document_id")
+                                context_parts.append(f"--- Document ({fname}) ---\n{doc.page_content}")
+                                if not any(s.get("filename") == fname for s in sources):
+                                    sources.append({"filename": fname, "document_id": doc_id, "content": doc.page_content[:200]})
+                except Exception as e:
+                    print(f"ChromaDB similarity search notice: {e}")
 
         # Fallback to DB documents if ChromaDB yielded no text
         if not context_parts:
@@ -127,17 +129,23 @@ class RAGService:
                 formatted_history.append(f"{r_name}: {content}")
             history_text = "\n\nPrevious Conversation History:\n" + "\n".join(formatted_history)
 
+        source_instruction = (
+            "Context from Uploaded Research Documents is provided below. Prioritize information from these uploaded documents. If you add additional facts beyond the documents, mark those parts with '[GEMINI ADDITIONAL KNOWLEDGE]'."
+            if context else
+            "No uploaded research document matched this query. Answer directly using your Gemini AI Knowledge Base. Include '[GEMINI ADDITIONAL KNOWLEDGE]' at the beginning."
+        )
+
         prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
 Your task is to provide complete, highly thorough, articulate, and accurate research responses.
 
-RESPONSE GUIDELINES:
+SOURCE & RESPONSE GUIDELINES:
+- {source_instruction}
 - Provide comprehensive, fully detailed answers without truncating or stopping mid-thought.
 - Format your response cleanly using standard GitHub-flavored Markdown (headers, bullet points, bold key terms).
-- Do NOT repeat headers, bullet prefixes, or text fragments sequentially (avoid loop repetition).
-- Be precise, informative, and complete.
+- Do NOT repeat headers or text fragments sequentially.
 
 Context from Uploaded Research Documents:
-{context if context else 'No specific document context attached. Provide a clear, detailed general research answer.'}{history_text}
+{context if context else 'No uploaded document context attached.'}{history_text}
 
 User Question: {question}
 
@@ -145,12 +153,12 @@ Research Response:"""
 
         try:
             answer = gemini_key_manager.invoke_with_fallback(prompt, temperature=0.5, max_output_tokens=4096)
-            return {"answer": answer, "sources": sources}
+            return {"answer": answer, "sources": sources, "response_source": "documents" if sources else "gemini"}
         except APIKeysExhaustedError:
             raise
         except Exception as e:
             print(f"Query execution error: {e}")
-            return {"answer": f"Error during query execution: {str(e)}", "sources": sources}
+            return {"answer": f"Error during query execution: {str(e)}", "sources": sources, "response_source": "error"}
 
     def _sync_stream_query(self, question: str, chat_history: List[tuple], document_id: Optional[Any]):
         """
@@ -162,8 +170,12 @@ Research Response:"""
 
         context, sources = self._retrieve_context_and_sources(question, document_id)
 
+        # Emit source metadata tags to frontend immediately
         if sources:
+            yield f"[[RESPONSE_SOURCE:DOCUMENTS]]\n"
             yield f"[[SOURCES_METADATA:{json.dumps(sources)}]]\n"
+        else:
+            yield f"[[RESPONSE_SOURCE:GEMINI]]\n"
 
         history_text = ""
         if chat_history:
@@ -173,24 +185,29 @@ Research Response:"""
                 formatted_history.append(f"{r_name}: {content}")
             history_text = "\n\nPrevious Conversation History:\n" + "\n".join(formatted_history)
 
+        source_instruction = (
+            "Context from Uploaded Research Documents is provided below. Prioritize information from these uploaded documents. If you add extra facts, mark those parts with '[GEMINI ADDITIONAL KNOWLEDGE]'."
+            if context else
+            "No uploaded research document matched this query. Answer directly using your Gemini AI Knowledge Base. Include '[GEMINI ADDITIONAL KNOWLEDGE]' at the start of your answer."
+        )
+
         prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
 Your task is to provide complete, highly thorough, articulate, and accurate research responses.
 
-RESPONSE GUIDELINES:
+SOURCE & RESPONSE GUIDELINES:
+- {source_instruction}
 - Provide comprehensive, fully detailed answers without truncating or stopping mid-thought.
 - Format your response cleanly using standard GitHub-flavored Markdown (headers, bullet points, bold key terms).
-- Do NOT repeat headers, bullet prefixes, or text fragments sequentially (avoid loop repetition).
-- Be precise, informative, and complete.
+- Do NOT repeat headers or text fragments sequentially.
 
 Context from Uploaded Research Documents:
-{context if context else 'No specific document context attached. Provide a clear, detailed general research answer.'}{history_text}
+{context if context else 'No uploaded document context attached.'}{history_text}
 
 User Question: {question}
 
 Research Response:"""
 
         try:
-            # max_output_tokens=4096 keeps first-token latency low on gemini-2.5-flash;
             for chunk in gemini_key_manager.stream_with_fallback(prompt, temperature=0.5, max_output_tokens=4096):
                 yield chunk
         except APIKeysExhaustedError:
