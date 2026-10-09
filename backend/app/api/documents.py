@@ -1,4 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.services.ingestion import ingestion_service
@@ -84,6 +85,21 @@ async def delete_document(document_id: int, db: Session = Depends(get_db)):
     db.delete(doc)
     db.commit()
     return {"message": "Document deleted successfully"}
+
+@router.get("/download/{document_id}")
+async def download_document(document_id: int, db: Session = Depends(get_db)):
+    doc = db.query(DocumentModel).filter(DocumentModel.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if not os.path.exists(doc.file_path):
+        raise HTTPException(status_code=404, detail="Document file missing on disk")
+
+    media_type = "application/pdf" if doc.file_type == "pdf" else "application/octet-stream"
+    return FileResponse(
+        path=doc.file_path,
+        filename=doc.filename,
+        media_type=media_type
+    )
 
 @router.get("/insights")
 async def get_insights(db: Session = Depends(get_db)):

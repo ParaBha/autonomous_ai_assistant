@@ -1542,6 +1542,15 @@ const App = () => {
                                                     <Sparkles size={13} />
                                                     Deep Analysis
                                                 </button>
+                                                <a
+                                                    href={`${API_URL}/api/v1/docs/download/${doc.id}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="flex items-center justify-center gap-1.5 py-2 text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 hover:bg-emerald-100 dark:hover:bg-emerald-500/20 rounded-xl transition-all col-span-2 mt-1"
+                                                >
+                                                    <Download size={13} />
+                                                    Download / View File
+                                                </a>
                                             </div>
                                             <button
                                                 onClick={() => deleteDocument(doc.id)}
