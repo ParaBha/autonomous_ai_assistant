@@ -20,19 +20,21 @@ Base.metadata.create_all(bind=engine)
 
 async def _self_ping_loop():
     """
-    Pings the server's own /health endpoint every 10 minutes to prevent
-    Render free-tier from putting the container to sleep. Eliminates cold-start
-    delays that cause chat timeouts.
+    Pings the public /health endpoint every 10 minutes to prevent
+    Render free-tier from spinning down the container.
+    localhost:8000 is NOT reachable inside Render containers — must use public URL.
     """
     import httpx
-    await asyncio.sleep(30)  # Give server time to fully start
+    SELF_URL = os.getenv("RENDER_EXTERNAL_URL", "https://autonomous-ai-assistant.onrender.com")
+    health_url = f"{SELF_URL.rstrip('/')}/health"
+    await asyncio.sleep(60)  # Give server time to fully start before first ping
     while True:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                await client.get("http://localhost:8000/health")
-            print("[KEEPALIVE] Self-ping OK")
+            async with httpx.AsyncClient(timeout=15) as client:
+                r = await client.get(health_url)
+            print(f"[KEEPALIVE] Self-ping OK → {r.status_code}")
         except Exception as e:
-            print(f"[KEEPALIVE] Ping failed (expected on first start): {e}")
+            print(f"[KEEPALIVE] Ping failed: {e}")
         await asyncio.sleep(600)  # Ping every 10 minutes
 
 
