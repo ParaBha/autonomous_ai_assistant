@@ -797,7 +797,7 @@ const App = () => {
 
         // Abort controller — 180s timeout to handle Render container cold-starts and deep RAG context synthesis
         const abortController = new AbortController();
-        const hardTimeout = setTimeout(() => abortController.abort(), 90000); // 90s — matches backend timeout
+        const hardTimeout = setTimeout(() => abortController.abort(), 180000); // 180s — allows for Render cold-start (~60s) + Gemini generation
 
         // Always use a relative path for the streaming endpoint.
         // On localhost, Vite's proxy routes /api -> http://localhost:8000 (avoids CORS issues).

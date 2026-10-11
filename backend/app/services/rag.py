@@ -74,48 +74,45 @@ class RAGService:
         context_parts = []
         doc_id_str = str(document_id).strip() if document_id is not None and str(document_id).strip() != "" and str(document_id).strip().lower() != "null" else None
 
-        # Fast exit: check if vector DB directory exists before lazy loading embeddings
-        if os.path.exists(self.vector_db_path):
-            vector_db = self._get_vector_db()
-            if vector_db is not None:
-                try:
-                    if vector_db._collection.count() > 0:
-                        if doc_id_str:
+        # PERF: If no specific document is targeted, skip ChromaDB entirely.
+        # Loading ChromaDB requires GoogleGenerativeAIEmbeddings which makes a cold
+        # Gemini API call and can take 30-60s on Render free tier. For plain chat
+        # (no document context), we skip it and let Gemini answer from its own knowledge.
+        if doc_id_str:
+            # Only hit ChromaDB / DB when a document is explicitly selected
+            if os.path.exists(self.vector_db_path):
+                vector_db = self._get_vector_db()
+                if vector_db is not None:
+                    try:
+                        if vector_db._collection.count() > 0:
                             filter_dict = {"document_id": doc_id_str}
                             docs = vector_db.similarity_search(question, k=4, filter=filter_dict)
-                        else:
-                            docs = vector_db.similarity_search(question, k=4)
-                        
-                        if docs:
-                            for doc in docs:
-                                fname = doc.metadata.get("filename", "Document")
-                                doc_id = doc.metadata.get("document_id")
-                                context_parts.append(f"--- Document ({fname}) ---\n{doc.page_content}")
-                                if not any(s.get("filename") == fname for s in sources):
-                                    sources.append({"filename": fname, "document_id": doc_id, "content": doc.page_content[:200]})
-                except Exception as e:
-                    print(f"ChromaDB similarity search notice: {e}")
+                            if docs:
+                                for doc in docs:
+                                    fname = doc.metadata.get("filename", "Document")
+                                    doc_id = doc.metadata.get("document_id")
+                                    context_parts.append(f"--- Document ({fname}) ---\n{doc.page_content}")
+                                    if not any(s.get("filename") == fname for s in sources):
+                                        sources.append({"filename": fname, "document_id": doc_id, "content": doc.page_content[:200]})
+                    except Exception as e:
+                        print(f"ChromaDB similarity search notice: {e}")
 
-        # Fallback to DB documents if ChromaDB yielded no text
-        if not context_parts:
-            try:
-                from app.db.database import SessionLocal
-                from app.models.models import Document as DocumentModel
-                db = SessionLocal()
+            # DB fallback only when doc_id is set and ChromaDB had no results
+            if not context_parts:
                 try:
-                    if doc_id_str:
+                    from app.db.database import SessionLocal
+                    from app.models.models import Document as DocumentModel
+                    db = SessionLocal()
+                    try:
                         db_docs = db.query(DocumentModel).filter(DocumentModel.id == int(doc_id_str)).all()
-                    else:
-                        db_docs = db.query(DocumentModel).order_by(DocumentModel.id.desc()).limit(3).all()
-                    
-                    for db_doc in db_docs:
-                        if db_doc and db_doc.extracted_text and len(db_doc.extracted_text.strip()) > 0:
-                            context_parts.append(f"--- Document ({db_doc.filename}) ---\n{db_doc.extracted_text[:4000]}")
-                            sources.append({"filename": db_doc.filename, "document_id": str(db_doc.id)})
-                finally:
-                    db.close()
-            except Exception as ex:
-                print(f"DB fallback error: {ex}")
+                        for db_doc in db_docs:
+                            if db_doc and db_doc.extracted_text and len(db_doc.extracted_text.strip()) > 0:
+                                context_parts.append(f"--- Document ({db_doc.filename}) ---\n{db_doc.extracted_text[:4000]}")
+                                sources.append({"filename": db_doc.filename, "document_id": str(db_doc.id)})
+                    finally:
+                        db.close()
+                except Exception as ex:
+                    print(f"DB fallback error: {ex}")
 
         context = "\n\n".join(context_parts)
         return context, sources
@@ -171,18 +168,16 @@ Research Response:"""
         Called from a thread-pool via stream_query (async).
         """
         print(f"[RAG] _sync_stream_query started for: {question[:80]}")
-        # Flush HTTP 200 OK headers to the client immediately
-        yield " "
+        # Yield source indicator immediately so headers flush to client
+        yield "[[RESPONSE_SOURCE:GEMINI]]\n"
 
         context, sources = self._retrieve_context_and_sources(question, document_id)
         print(f"[RAG] context_len={len(context)}, sources={len(sources)}")
 
-        # Tell the frontend where the answer came from
+        # Update response source now that we know
         if sources:
             yield f"[[RESPONSE_SOURCE:DOCUMENTS]]\n"
             yield f"[[SOURCES_METADATA:{json.dumps(sources)}]]\n"
-        else:
-            yield f"[[RESPONSE_SOURCE:GEMINI]]\n"
 
         history_text = ""
         if chat_history:

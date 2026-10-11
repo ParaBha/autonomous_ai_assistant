@@ -1,7 +1,9 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 import uvicorn
 import os
+import asyncio
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -15,8 +17,39 @@ from app.db.database import engine, Base
 
 Base.metadata.create_all(bind=engine)
 
-# Deployment Version: 1.0.3 (Abort handling & Gemini 2.5-flash sync)
-app = FastAPI(title="Autonomous AI Research Assistant")
+
+async def _self_ping_loop():
+    """
+    Pings the server's own /health endpoint every 10 minutes to prevent
+    Render free-tier from putting the container to sleep. Eliminates cold-start
+    delays that cause chat timeouts.
+    """
+    import httpx
+    await asyncio.sleep(30)  # Give server time to fully start
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.get("http://localhost:8000/health")
+            print("[KEEPALIVE] Self-ping OK")
+        except Exception as e:
+            print(f"[KEEPALIVE] Ping failed (expected on first start): {e}")
+        await asyncio.sleep(600)  # Ping every 10 minutes
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start keep-alive background task
+    task = asyncio.create_task(_self_ping_loop())
+    yield
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+
+# Deployment Version: 1.0.4 (Keep-alive self-ping + skip ChromaDB for plain chat)
+app = FastAPI(title="Autonomous AI Research Assistant", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,6 +83,11 @@ app.include_router(auth_router, prefix="/api/v1/auth", tags=["authentication"])
 @app.get("/")
 async def root():
     return {"message": "Welcome to the Autonomous AI Research Assistant API"}
+
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":
