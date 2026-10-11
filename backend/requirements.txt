@@ -21,11 +21,11 @@ python-docx
 python-pptx
 pytesseract
 pandas
-openai-whisper
 gTTS
 python-dotenv
 aiofiles
-librosa
-soundfile
 supabase
 matplotlib
+# Note: openai-whisper, librosa, soundfile are excluded intentionally —
+# they require PyTorch (~1.5GB) which exceeds Render free-tier 512MB RAM.
+# Voice transcription is lazy-loaded and will gracefully error if not installed.
