@@ -890,15 +890,15 @@ const App = () => {
                     }
                 }
 
-                // Clean display text by stripping metadata tags
+                // Clean display text by stripping metadata tags (non-greedy, only closed tags)
                 let cleanText = rawStreamBuffer
-                    .replace(/\[\[RESPONSE_SOURCE:[\s\S]*?\]\]\n?/g, '')
-                    .replace(/\[\[SOURCES_METADATA:[\s\S]*?\]\]\n?/g, '')
-                    .replace(/__SOURCES__:[\s\S]*?\n?/g, '')
+                    .replace(/\[\[RESPONSE_SOURCE:[^\]]*?\]\]\n?/g, '')
+                    .replace(/\[\[SOURCES_METADATA:[^\]]*?\]\]\n?/g, '')
+                    .replace(/__SOURCES__:[^\n]*?\n?/g, '')
                     .replace(/^\s+/, '');
 
-                // Strip any leftover partial metadata tags during mid-stream (e.g. "[[SOURCES_MET...")
-                cleanText = cleanText.replace(/\[\[(?:RESPONSE_SOURCE|SOURCES_METADATA)[\s\S]*$/g, '');
+                // Strip only INCOMPLETE partial metadata tags at end of buffer (not the whole rest!)
+                cleanText = cleanText.replace(/\[\[(?:RESPONSE_SOURCE|SOURCES_METADATA)[^\]]*$/g, '');
 
                 const hasRealText = cleanText.trim().length > 0;
                 const displayContent = hasRealText ? cleanText : '';
@@ -919,9 +919,9 @@ const App = () => {
             }
 
             let finalCleanText = rawStreamBuffer
-                .replace(/\[\[RESPONSE_SOURCE:[\s\S]*?\]\]\n?/g, '')
-                .replace(/\[\[SOURCES_METADATA:[\s\S]*?\]\]\n?/g, '')
-                .replace(/__SOURCES__:[\s\S]*?\n?/g, '')
+                .replace(/\[\[RESPONSE_SOURCE:[^\]]*?\]\]\n?/g, '')
+                .replace(/\[\[SOURCES_METADATA:[^\]]*?\]\]\n?/g, '')
+                .replace(/__SOURCES__:[^\n]*?\n?/g, '')
                 .replace(/^\s+/, '');
 
             const safeFinalText = finalCleanText.trim().length > 0 
