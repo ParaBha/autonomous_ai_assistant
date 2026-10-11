@@ -185,43 +185,51 @@ Research Response:"""
             for role, content in chat_history:
                 r_name = "User" if str(role).lower() == "user" else "Assistant"
                 formatted_history.append(f"{r_name}: {content}")
-            history_text = "\n\nPrevious Conversation History:\n" + "\n".join(formatted_history)
+            history_text = "\n\nPrevious Conversation:\n" + "\n".join(formatted_history[-6:])
 
         source_instruction = (
-            "Context from Uploaded Research Documents is provided below. Prioritize information from these uploaded documents. If you add extra facts, mark those parts with '[ADDITIONAL KNOWLEDGE]'."
+            "Use the provided research document context below. If you add extra facts, mark them with '[ADDITIONAL KNOWLEDGE]'."
             if context else
-            "No uploaded research document matched this query. Answer directly using your Research Knowledge. Include '[ADDITIONAL KNOWLEDGE]' at the start of your answer."
+            "Answer using your knowledge. Start with '[ADDITIONAL KNOWLEDGE]'."
         )
 
-        prompt = f"""You are an Autonomous AI Research Assistant powered by Google Gemini.
-Your task is to provide complete, highly thorough, articulate, and accurate research responses.
+        # Keep prompt concise — large prompts cause first-token latency on free tier
+        prompt = f"""You are an AI Research Assistant. {source_instruction}
 
-SOURCE & RESPONSE GUIDELINES:
-- {source_instruction}
-- Provide comprehensive, fully detailed answers without truncating or stopping mid-thought.
-- Format your response cleanly using standard GitHub-flavored Markdown (headers, bullet points, bold key terms).
-- Do NOT repeat headers or text fragments sequentially.
+{f'Context:{chr(10)}{context[:3000]}' if context else ''}{history_text}
 
-Context from Uploaded Research Documents:
-{context if context else 'No uploaded document context attached.'}{history_text}
+User: {question}
+Assistant:"""
 
-User Question: {question}
+        import threading
+        # Hard 70s timeout on the Gemini call to prevent indefinite blocking
+        _stop = threading.Event()
 
-Research Response:"""
+        def _gemini_stream_with_timeout():
+            try:
+                chunk_count = 0
+                for chunk in gemini_key_manager.stream_with_fallback(prompt, temperature=0.4, max_output_tokens=2048):
+                    if _stop.is_set():
+                        break
+                    chunk_count += 1
+                    if chunk_count == 1:
+                        print(f"[RAG] First Gemini chunk received: {repr(chunk[:40])}")
+                    yield chunk
+                print(f"[RAG] Streaming done. Chunks yielded: {chunk_count}")
+            except APIKeysExhaustedError:
+                yield "\n\n⚠️ All Gemini API keys are rate-limited. Please wait 30 seconds and retry."
+            except Exception as e:
+                print(f"[RAG] Gemini stream error: {e}")
+                yield f"\n\n⚠️ AI error: {str(e)[:200]}"
 
         try:
-            chunk_count = 0
-            for chunk in gemini_key_manager.stream_with_fallback(prompt, temperature=0.5, max_output_tokens=4096):
-                chunk_count += 1
-                if chunk_count == 1:
-                    print(f"[RAG] First Gemini chunk: {repr(chunk[:50])}")
+            for chunk in _gemini_stream_with_timeout():
                 yield chunk
-            print(f"[RAG] Streaming done. Chunks yielded: {chunk_count}")
-        except APIKeysExhaustedError:
-            yield "\n\n[ERROR: 429 Rate Limit – All Gemini API keys are currently exhausted.]"
         except Exception as e:
-            print(f"[RAG] Stream error: {e}")
-            yield f"\n\n[Error: {str(e)}]"
+            print(f"[RAG] _sync_stream_query outer error: {e}")
+            yield f"\n\n⚠️ Error: {str(e)[:200]}"
+        finally:
+            _stop.set()
 
     async def stream_query(self, question: str, chat_history: List[tuple] = [], document_id: Optional[Any] = None):
         """

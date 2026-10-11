@@ -8,26 +8,21 @@ from app.core.config import settings
 MAX_RETRIES = 2       # retries per model before falling back to next model
 RETRY_DELAY = 1       # seconds between retries on 503
 
-# Ordered fallback chain — active supported Gemini models
+# Ordered fallback chain — fast models first, no thinking mode
 MODEL_FALLBACK_CHAIN = [
-    "gemini-2.5-flash",
-    "gemini-flash-latest",
-    "gemini-pro-latest",
+    "gemini-2.0-flash",          # Fastest, no thinking overhead
+    "gemini-1.5-flash",          # Reliable fallback
+    "gemini-2.0-flash-lite",     # Lightest fallback
 ]
 
 def _build_config(temperature: float, max_output_tokens: int) -> types.GenerateContentConfig:
     """Return a fast GenerateContentConfig with minimal first-token latency."""
-    try:
-        return types.GenerateContentConfig(
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-            thinking_config=types.ThinkingConfig(thinking_budget=0)
-        )
-    except Exception:
-        return types.GenerateContentConfig(
-            temperature=temperature,
-            max_output_tokens=max_output_tokens,
-        )
+    # NOTE: Do NOT use ThinkingConfig — it adds 10-30s overhead even with budget=0
+    # on gemini-2.5-flash. gemini-2.0-flash has no thinking mode.
+    return types.GenerateContentConfig(
+        temperature=temperature,
+        max_output_tokens=max_output_tokens,
+    )
 
 class APIKeysExhaustedError(Exception):
     """Raised when all configured Gemini API keys are exhausted due to rate limits (429 / ResourceExhausted)."""

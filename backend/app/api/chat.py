@@ -58,14 +58,14 @@ async def stream_chat(request: ChatRequest):
         or with a human-readable error message. Never hangs silently.
         """
         try:
-            # 90-second hard deadline for the entire response
-            async with asyncio.timeout(90):
+            # 120-second hard deadline for the entire response (gemini-2.0-flash is fast)
+            async with asyncio.timeout(120):
                 async for chunk in rag_service.stream_query(
                     msg, history, request.document_id
                 ):
                     yield chunk
         except asyncio.TimeoutError:
-            yield "\n\n⚠️ Response timed out (90s). The AI model may be overloaded. Please try again."
+            yield "\n\n⚠️ Response timed out (120s). The server may be under load. Please try again."
         except APIKeysExhaustedError:
             yield "\n\n⚠️ All Gemini API keys are rate-limited (429). Please wait 30 seconds and try again."
         except Exception as e:
