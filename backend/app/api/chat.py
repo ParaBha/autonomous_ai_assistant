@@ -9,16 +9,35 @@ import asyncio
 router = APIRouter()
 
 class ChatRequest(BaseModel):
-    message: str
-    chat_history: Optional[List[Any]] = []
+    message: Optional[str] = ""
+    chat_history: Optional[List[Any]] = None
     document_id: Optional[Any] = None
+
+    class Config:
+        extra = "ignore"
+
+def _parse_chat_history(raw_history: Optional[List[Any]]) -> List[tuple]:
+    """Safely convert any chat_history format into List[tuple(role, content)] without throwing."""
+    if not raw_history:
+        return []
+    history = []
+    for item in raw_history:
+        try:
+            if isinstance(item, (list, tuple)) and len(item) >= 2:
+                history.append((str(item[0]), str(item[1])))
+            elif isinstance(item, dict) and "role" in item and "content" in item:
+                history.append((str(item["role"]), str(item["content"])))
+        except Exception:
+            continue
+    return history
 
 @router.post("/chat")
 async def chat(request: ChatRequest):
-    print(f"Received chat request: {request.message}")
-    history = [tuple(h) for h in (request.chat_history or [])]
+    msg = (request.message or "").strip() or "Hello"
+    print(f"Received chat request: {msg}")
+    history = _parse_chat_history(request.chat_history)
     try:
-        return rag_service.query(request.message, history, request.document_id)
+        return rag_service.query(msg, history, request.document_id)
     except APIKeysExhaustedError as exc:
         raise HTTPException(
             status_code=429,
@@ -30,7 +49,8 @@ async def chat(request: ChatRequest):
 
 @router.post("/stream_chat")
 async def stream_chat(request: ChatRequest):
-    history = [tuple(h) for h in (request.chat_history or [])]
+    msg = (request.message or "").strip() or "Hello"
+    history = _parse_chat_history(request.chat_history)
 
     async def safe_stream():
         """
@@ -41,7 +61,7 @@ async def stream_chat(request: ChatRequest):
             # 90-second hard deadline for the entire response
             async with asyncio.timeout(90):
                 async for chunk in rag_service.stream_query(
-                    request.message, history, request.document_id
+                    msg, history, request.document_id
                 ):
                     yield chunk
         except asyncio.TimeoutError:

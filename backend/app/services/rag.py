@@ -238,21 +238,12 @@ Research Response:"""
             """Executed in thread pool — collects sync generator chunks and enqueues them."""
             try:
                 for chunk in self._sync_stream_query(question, chat_history, document_id):
-                    fut = asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
-                    fut.result(timeout=30)  # block this thread until put completes
+                    loop.call_soon_threadsafe(queue.put_nowait, chunk)
             except Exception as ex:
                 print(f"[RAG] Thread error: {ex}")
-                try:
-                    asyncio.run_coroutine_threadsafe(
-                        queue.put(f"\n\n⚠️ Stream error: {str(ex)}"), loop
-                    ).result(timeout=5)
-                except Exception:
-                    pass
+                loop.call_soon_threadsafe(queue.put_nowait, f"\n\n⚠️ Stream error: {str(ex)}")
             finally:
-                try:
-                    asyncio.run_coroutine_threadsafe(queue.put(_DONE), loop).result(timeout=5)
-                except Exception:
-                    pass
+                loop.call_soon_threadsafe(queue.put_nowait, _DONE)
 
         # Launch sync generator in a thread
         loop.run_in_executor(None, _run_sync)
