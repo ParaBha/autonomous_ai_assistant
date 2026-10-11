@@ -3,6 +3,8 @@ import io
 import contextlib
 import traceback
 import os
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend — required for headless servers (Render/Docker)
 import matplotlib.pyplot as plt
 import pandas as pd
 from typing import Dict, Any, Optional
