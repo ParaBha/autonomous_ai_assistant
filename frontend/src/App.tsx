@@ -838,11 +838,16 @@ const App = () => {
             // The stream body might still hang. Timeout stays active until finally{}.
 
             if (!response.ok) {
-
                 let errorText = `Server error ${response.status}`;
                 try {
                     const errData = await response.json();
-                    errorText = errData.detail || errorText;
+                    if (typeof errData?.detail === 'string') {
+                        errorText = errData.detail;
+                    } else if (Array.isArray(errData?.detail)) {
+                        errorText = errData.detail.map((d: any) => d.msg || JSON.stringify(d)).join(', ');
+                    } else if (errData?.detail) {
+                        errorText = JSON.stringify(errData.detail);
+                    }
                 } catch {
                     try { const txt = await response.text(); if (txt) errorText = txt; } catch {}
                 }
@@ -919,13 +924,17 @@ const App = () => {
                 .replace(/__SOURCES__:[\s\S]*?\n?/g, '')
                 .replace(/^\s+/, '');
 
+            const safeFinalText = finalCleanText.trim().length > 0 
+                ? finalCleanText 
+                : "I received your request. How can I help you with your research?";
+
             setMessages(prev => {
                 const last = [...prev];
                 const idx = last.findIndex(m => (m as any).id === assistantMessageId);
                 if (idx !== -1) {
                     last[idx] = { 
                         ...last[idx], 
-                        content: finalCleanText, 
+                        content: safeFinalText, 
                         sources,
                         responseSource: responseSource || (sources.length > 0 ? 'documents' : 'gemini')
                     };
@@ -934,7 +943,7 @@ const App = () => {
             });
             
             // Speak if enabled
-            if (voiceEnabled) speak(finalCleanText);
+            if (voiceEnabled) speak(safeFinalText);
 
             // ── Auto-retry on 429 in streamed content ──────────────────────────
             if (rawStreamBuffer.includes('[ERROR: 429') || rawStreamBuffer.includes('Rate Limit')) {

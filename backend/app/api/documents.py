@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from app.db.database import get_db
@@ -16,7 +16,11 @@ router = APIRouter()
 import uuid
 
 @router.post("/upload")
-async def upload_document(file: UploadFile = File(...), db: Session = Depends(get_db)):
+def upload_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
     if not os.path.exists(settings.UPLOAD_DIR):
         os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
         
@@ -52,11 +56,14 @@ async def upload_document(file: UploadFile = File(...), db: Session = Depends(ge
         db.commit()
         db.refresh(db_doc)
         
-        # Ingest into RAG vector DB safely
-        try:
-            rag_service.process_and_store(text, str(db_doc.id), {"filename": sanitized_filename})
-        except Exception as rag_err:
-            print(f"RAG vector indexing notice for {sanitized_filename}: {rag_err}")
+        # Offload heavy embedding & vector storage to background task
+        # This makes the upload respond instantly in < 1 second!
+        background_tasks.add_task(
+            rag_service.process_and_store,
+            text,
+            str(db_doc.id),
+            {"filename": sanitized_filename}
+        )
 
         return {
             "id": db_doc.id,

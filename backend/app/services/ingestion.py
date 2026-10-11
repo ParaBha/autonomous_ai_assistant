@@ -25,23 +25,25 @@ class IngestionService:
         except Exception as e:
             return f"[PDF Document Asset: {filename} (Extraction note: {str(e)})]"
 
-        # If text is empty (scanned image-only PDF), attempt OCR page rendering
+        # If text is empty (scanned image-only PDF), attempt OCR page rendering only if tesseract is installed
         if not text.strip():
-            try:
-                with fitz.open(file_path) as doc:
-                    ocr_pages = []
-                    for page_num, page in enumerate(doc, start=1):
-                        pix = page.get_pixmap(dpi=150)
-                        from PIL import Image
-                        import pytesseract
-                        img = Image.open(io.BytesIO(pix.tobytes("png")))
-                        p_ocr = pytesseract.image_to_string(img).strip()
-                        if p_ocr:
-                            ocr_pages.append(f"--- PAGE {page_num} (OCR) ---\n{p_ocr}")
-                    if ocr_pages:
-                        return "\n\n".join(ocr_pages)
-            except Exception as ocr_err:
-                print(f"PDF OCR fallback notice for {filename}: {ocr_err}")
+            import shutil
+            if shutil.which("tesseract"):
+                try:
+                    with fitz.open(file_path) as doc:
+                        ocr_pages = []
+                        for page_num, page in enumerate(doc[:10], start=1):
+                            pix = page.get_pixmap(dpi=150)
+                            from PIL import Image
+                            import pytesseract
+                            img = Image.open(io.BytesIO(pix.tobytes("png")))
+                            p_ocr = pytesseract.image_to_string(img).strip()
+                            if p_ocr:
+                                ocr_pages.append(f"--- PAGE {page_num} (OCR) ---\n{p_ocr}")
+                        if ocr_pages:
+                            return "\n\n".join(ocr_pages)
+                except Exception as ocr_err:
+                    print(f"PDF OCR fallback notice for {filename}: {ocr_err}")
             return f"[PDF Document Asset: {filename} (Scanned Image-Based PDF)]"
 
         return text

@@ -49,9 +49,13 @@ class RAGService:
     def process_and_store(self, text: str, document_id: str, metadata: Dict[str, Any] = {}):
         try:
             chunks = self.text_splitter.split_text(text)
-            metadatas = [metadata or {} for _ in chunks]
+            if not chunks:
+                return
+            # Cap at 50 chunks to prevent rate-limiting & lengthy background execution
+            chunks = chunks[:50]
+            metadatas = [dict(metadata or {}) for _ in chunks]
             for meta in metadatas:
-                meta["document_id"] = document_id
+                meta["document_id"] = str(document_id)
 
             Chroma.from_texts(
                 texts=chunks,
@@ -60,6 +64,7 @@ class RAGService:
                 metadatas=metadatas
             )
             self.invalidate_cache()
+            print(f"[RAG] Indexed {len(chunks)} chunks for document_id={document_id}")
         except Exception as e:
             print(f"Error in process_and_store: {str(e)}")
             traceback.print_exc()
