@@ -227,7 +227,8 @@ Research Response:"""
         """
         Async generator. Runs the blocking _sync_stream_query in a thread executor
         and forwards chunks via asyncio.Queue.
-        Sends keepalive spaces every 3s so proxy servers don't close the idle connection.
+        Sends keepalive spaces every 2s so proxy servers don't close the idle connection.
+        The outer safe_stream() wrapper in chat.py applies a hard 90s deadline.
         """
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
@@ -237,34 +238,37 @@ Research Response:"""
             """Executed in thread pool — collects sync generator chunks and enqueues them."""
             try:
                 for chunk in self._sync_stream_query(question, chat_history, document_id):
-                    # run_coroutine_threadsafe is safe to call from any thread
                     fut = asyncio.run_coroutine_threadsafe(queue.put(chunk), loop)
                     fut.result(timeout=30)  # block this thread until put completes
             except Exception as ex:
-                asyncio.run_coroutine_threadsafe(
-                    queue.put(f"\n\n[Error: {str(ex)}]"), loop
-                ).result(timeout=5)
+                print(f"[RAG] Thread error: {ex}")
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        queue.put(f"\n\n⚠️ Stream error: {str(ex)}"), loop
+                    ).result(timeout=5)
+                except Exception:
+                    pass
             finally:
-                asyncio.run_coroutine_threadsafe(queue.put(_DONE), loop).result(timeout=5)
+                try:
+                    asyncio.run_coroutine_threadsafe(queue.put(_DONE), loop).result(timeout=5)
+                except Exception:
+                    pass
 
         # Launch sync generator in a thread
-        future = loop.run_in_executor(None, _run_sync)
+        loop.run_in_executor(None, _run_sync)
 
         # Yield chunks as they arrive; send keepalive if we wait too long
+        # The outer asyncio.timeout(90) in chat.py terminates this if it runs too long
         while True:
             try:
-                item = await asyncio.wait_for(queue.get(), timeout=3.0)
+                item = await asyncio.wait_for(queue.get(), timeout=2.0)
                 if item is _DONE:
                     break
                 yield item
             except asyncio.TimeoutError:
                 yield " "  # keepalive — invisible to frontend (whitespace)
 
-        # Surface any thread exception (optional, for debugging)
-        try:
-            await asyncio.shield(asyncio.wrap_future(future))
-        except Exception:
-            pass
+
 
 
 rag_service = RAGService()

@@ -797,7 +797,7 @@ const App = () => {
 
         // Abort controller — 180s timeout to handle Render container cold-starts and deep RAG context synthesis
         const abortController = new AbortController();
-        const hardTimeout = setTimeout(() => abortController.abort(), 180000);
+        const hardTimeout = setTimeout(() => abortController.abort(), 90000); // 90s — matches backend timeout
 
         // Always use a relative path for the streaming endpoint.
         // On localhost, Vite's proxy routes /api -> http://localhost:8000 (avoids CORS issues).
@@ -834,9 +834,11 @@ const App = () => {
                 signal: abortController.signal,
             });
 
-            clearTimeout(hardTimeout);
+            // NOTE: Do NOT clear the timeout here — the fetch resolving only means headers arrived.
+            // The stream body might still hang. Timeout stays active until finally{}.
 
             if (!response.ok) {
+
                 let errorText = `Server error ${response.status}`;
                 try {
                     const errData = await response.json();
