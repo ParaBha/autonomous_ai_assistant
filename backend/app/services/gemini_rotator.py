@@ -210,12 +210,25 @@ class GeminiKeyManager:
     def get_status(self) -> dict:
         with self._lock:
             now = time.time()
-            active_key, active_role = self.get_active_key()
-            
+
             def mask_key(k: str) -> str:
                 return (k[:6] + "..." + k[-4:]) if len(k) > 10 else ("Configured" if k else "Not set")
 
             healthy_count = sum(1 for k in self.keys if now >= self.key_cooldowns.get(k, 0.0))
+
+            # Compute active key inline — do NOT call self.get_active_key() here
+            # because that method also acquires self._lock → deadlock.
+            healthy_keys = [k for k in self.keys if now >= self.key_cooldowns.get(k, 0.0)]
+            if healthy_keys:
+                idx = self._rr_index % len(healthy_keys)
+                active_key = healthy_keys[idx]
+                active_role = "PRIMARY" if (self.keys and active_key == self.keys[0]) else "SECONDARY"
+            elif self.keys:
+                active_key = min(self.keys, key=lambda k: self.key_cooldowns.get(k, 0.0))
+                active_role = "FALLBACK"
+            else:
+                active_key = settings.get_primary_key()
+                active_role = "PRIMARY"
 
             return {
                 "total_keys": len(self.keys),

@@ -3,12 +3,22 @@ import json
 import asyncio
 import traceback
 from typing import List, Dict, Any, Optional
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
 
 from app.core.config import settings
 from app.services.gemini_rotator import gemini_key_manager, APIKeysExhaustedError
+
+# Lazy-import ChromaDB — it requires native C++ libs that may fail to compile on
+# Render free-tier. If unavailable, RAG simply falls back to plain DB text lookup.
+try:
+    from langchain_community.vectorstores import Chroma
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
+    _CHROMA_AVAILABLE = True
+except Exception as _chroma_import_err:
+    _CHROMA_AVAILABLE = False
+    Chroma = None  # type: ignore
+    GoogleGenerativeAIEmbeddings = None  # type: ignore
+    print(f"[RAG] ChromaDB/embeddings unavailable (RAG disabled, plain chat still works): {_chroma_import_err}")
 
 class RAGService:
     def __init__(self):
@@ -24,10 +34,12 @@ class RAGService:
 
     @property
     def embeddings(self):
+        if not _CHROMA_AVAILABLE:
+            return None
         if self._embeddings is None:
             active_key, _ = gemini_key_manager.get_active_key()
             self._embeddings = GoogleGenerativeAIEmbeddings(
-                model="models/gemini-embedding-001",
+                model="models/text-embedding-004",
                 google_api_key=active_key or settings.get_primary_key()
             )
         return self._embeddings
@@ -38,7 +50,9 @@ class RAGService:
         self._embeddings = None
 
     def _get_vector_db(self):
-        """Return cached ChromaDB instance."""
+        """Return cached ChromaDB instance, or None if unavailable."""
+        if not _CHROMA_AVAILABLE:
+            return None
         if self._vector_db is None and os.path.exists(self.vector_db_path):
             self._vector_db = Chroma(
                 persist_directory=self.vector_db_path,
@@ -47,6 +61,9 @@ class RAGService:
         return self._vector_db
 
     def process_and_store(self, text: str, document_id: str, metadata: Dict[str, Any] = {}):
+        if not _CHROMA_AVAILABLE:
+            print(f"[RAG] ChromaDB unavailable — skipping vector indexing for document_id={document_id}")
+            return
         try:
             chunks = self.text_splitter.split_text(text)
             if not chunks:

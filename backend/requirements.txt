@@ -1,6 +1,6 @@
 fastapi
 httpx
-uvicorn
+uvicorn[standard]
 pydantic[email]
 pydantic-settings
 sqlalchemy
@@ -16,17 +16,17 @@ langchain-text-splitters
 langchain-community
 langchain
 langgraph
-chromadb
+chromadb==0.4.24
 PyMuPDF
 python-docx
 python-pptx
-pytesseract
 pandas
+Pillow
 gTTS
 python-dotenv
 aiofiles
 supabase
-matplotlib
+# Note: pytesseract excluded — requires system 'tesseract-ocr' binary not available on Render free tier.
 # Note: openai-whisper, librosa, soundfile are excluded intentionally —
 # they require PyTorch (~1.5GB) which exceeds Render free-tier 512MB RAM.
 # Voice transcription is lazy-loaded and will gracefully error if not installed.

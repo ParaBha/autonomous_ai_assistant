@@ -15,7 +15,11 @@ from app.api.oauth import router as oauth_router
 from app.api.auth import router as auth_router
 from app.db.database import engine, Base
 
-Base.metadata.create_all(bind=engine)
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as _db_init_err:
+    print(f"[STARTUP WARNING] Could not create DB tables: {_db_init_err}")
+
 
 
 async def _self_ping_loop():
