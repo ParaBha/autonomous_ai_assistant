@@ -8,11 +8,12 @@ from app.core.config import settings
 MAX_RETRIES = 2       # retries per model before falling back to next model
 RETRY_DELAY = 1       # seconds between retries on 503
 
-# Ordered fallback chain — fast models first, no thinking mode
+# Ordered fallback chain — 2.5-flash first, then progressively lighter models
 MODEL_FALLBACK_CHAIN = [
-    "gemini-2.0-flash",          # Fastest, no thinking overhead
-    "gemini-1.5-flash",          # Reliable fallback
-    "gemini-2.0-flash-lite",     # Lightest fallback
+    "gemini-2.5-flash",          # Latest & most capable flash model
+    "gemini-2.0-flash",          # Fast fallback with higher rate limits
+    "gemini-1.5-flash",          # Reliable stable fallback
+    "gemini-2.0-flash-lite",     # Lightest emergency fallback
 ]
 
 def _build_config(temperature: float, max_output_tokens: int) -> types.GenerateContentConfig:
